@@ -1,3 +1,9 @@
 ollama
-elevenlabs
-python-dotenv
+pyttsx3
+faster-whisper
+sounddevice
+numpy
+keyboard
+requests
+beautifulsoup4
+ddgs
