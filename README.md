@@ -43,11 +43,13 @@ Voice input ──▶ faster-whisper (STT)
 
 Skills are plain Python modules dropped into the skills directory. A decorator registers each function with its trigger metadata, and the loader picks them up automatically at startup — adding a capability means writing one function, not touching the core.
 
+
+
 ## Getting started
 
 ### Requirements
 - Windows 10/11
-- Python 
+- Python 3.10+ 
 - [Ollama](https://ollama.com) installed and running
 - A machine with enough RAM/VRAM for Llama 3.1 8B 
 
@@ -55,11 +57,10 @@ Skills are plain Python modules dropped into the skills directory. A decorator r
 ```bash
 git clone https://github.com/manthunn/ghost-assistant.git
 cd ghost-assistant
-pip install -r requirements.txt   
+pip install -r requirements.txt
 ollama pull llama3.1
-python main.py                  
+python main.py
 ```
-
 
 ## Lessons from building this
 
@@ -72,3 +73,7 @@ python main.py
 - [ ] Wake-word detection
 - [ ] Cross-platform TTS
 - [ ] Configurable model backends
+
+## License
+
+MIT
