@@ -11,11 +11,19 @@ WAIT_SECS = 600          # hands-free: waits up to 10 min for speech
 
 _whisper = None
 
+# Domain vocabulary that's easy to mis-hear otherwise (app names, places, etc.)
+VOCAB_HINT = ("Ghost, Vivaldi, Notepad, Spotify, VS Code, Deakin Hall, Clayton, "
+              "Monash, AFL, NRL")
+
 def load_ears():
     global _whisper
     if _whisper is None:
         print("Loading ears...")
-        _whisper = WhisperModel("base.en", device="cpu", compute_type="int8")
+        try:
+            _whisper = WhisperModel("small.en", device="cuda", compute_type="float16")
+        except Exception as e:
+            print(f"  GPU unavailable for Whisper ({e}), falling back to CPU.")
+            _whisper = WhisperModel("small.en", device="cpu", compute_type="int8")
     return _whisper
 
 def speak(text):
@@ -55,5 +63,6 @@ def listen():
     audio = _record_until_silence()
     if audio is None:
         return ""
-    segments, _ = load_ears().transcribe(audio, language="en")
+    segments, _ = load_ears().transcribe(
+        audio, language="en", vad_filter=True, initial_prompt=VOCAB_HINT)
     return " ".join(s.text for s in segments).strip()
