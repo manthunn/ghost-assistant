@@ -5,7 +5,7 @@ sys.stderr.reconfigure(encoding="utf-8")
 import asyncio
 import threading
 from ghost import live_voice
-from ghost.ui import GhostUI
+from ghost.ui3d import GhostUI
 from ghost.skills import load_all
 
 def assistant_loop(ui, stop_event):
@@ -18,7 +18,10 @@ def assistant_loop(ui, stop_event):
     except Exception as e:
         print(f"Ghost session ended with an error: {e}")
     ui.set("⚫ Offline")
-    ui.root.after(300, ui.root.destroy)
+    try:
+        ui.window.destroy()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     stop_event = threading.Event()

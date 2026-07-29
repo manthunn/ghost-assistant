@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ghost</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
+  #scene { position: fixed; inset: 0; }
+  #hud {
+    position: fixed; left: 40px; bottom: 40px; z-index: 10;
+    font-family: 'Segoe UI', sans-serif; color: #f0f0f5; user-select: none;
+    -webkit-app-region: drag;
+  }
+  #hud .state { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  #hud .dot { width: 12px; height: 12px; border-radius: 50%; background: #3ecf6a;
+              box-shadow: 0 0 12px currentColor; transition: background 0.4s; }
+  #hud .detail { font-size: 13px; color: #8a8a99; margin-top: 4px; margin-left: 22px; }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<div id="hud">
+  <div class="state"><span class="dot" id="dot"></span><span id="word">Booting</span></div>
+  <div class="detail" id="detail"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+const COLORS = {
+  Listening: 0x3ecf6a, Thinking: 0xf5b83d, Working: 0x4a9eff,
+  Speaking: 0xb78cff, Offline: 0x5a5a66, Booting: 0x5a5a66,
+};
+const SKILLS = ["open_app", "web_search", "remember", "recall", "run_command",
+  "click_control", "read_window_text", "delegate_task", "media_control"];
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.position.set(0, 0, 60);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.getElementById("scene").appendChild(renderer.domElement);
+
+// Starfield
+const starGeo = new THREE.BufferGeometry();
+const STAR_COUNT = 4000;
+const starPos = new Float32Array(STAR_COUNT * 3);
+for (let i = 0; i < STAR_COUNT; i++) {
+  const r = 200 + Math.random() * 600;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  starPos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+  starPos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+  starPos[i*3+2] = r * Math.cos(phi);
+}
+starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+
+// Soft round sprite for all particles instead of Three.js's default square points
+function makeDotTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const ctx = c.getContext("2d");
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.4, "rgba(255,255,255,0.6)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const dotTexture = makeDotTexture();
+
+const starMat = new THREE.PointsMaterial({
+  color: 0xaaaaee, size: 1.6, map: dotTexture, transparent: true, opacity: 0.8,
+  depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+// Nebula dust ring
+const dustGeo = new THREE.BufferGeometry();
+const DUST_COUNT = 1500;
+const dustPos = new Float32Array(DUST_COUNT * 3);
+for (let i = 0; i < DUST_COUNT; i++) {
+  const r = 18 + Math.random() * 22;
+  const theta = Math.random() * Math.PI * 2;
+  const y = (Math.random() - 0.5) * 8;
+  dustPos[i*3]   = r * Math.cos(theta);
+  dustPos[i*3+1] = y;
+  dustPos[i*3+2] = r * Math.sin(theta);
+}
+dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+const dustMat = new THREE.PointsMaterial({
+  color: 0xb78cff, size: 1.1, map: dotTexture, transparent: true, opacity: 0.5,
+  depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const dust = new THREE.Points(dustGeo, dustMat);
+scene.add(dust);
+
+// Core orb
+const coreGeo = new THREE.IcosahedronGeometry(6, 3);
+const coreMat = new THREE.MeshBasicMaterial({ color: COLORS.Booting, wireframe: true, transparent: true, opacity: 0.9 });
+const core = new THREE.Mesh(coreGeo, coreMat);
+scene.add(core);
+
+const glowGeo = new THREE.IcosahedronGeometry(6.4, 2);
+const glowMat = new THREE.MeshBasicMaterial({ color: COLORS.Booting, transparent: true, opacity: 0.08 });
+const glow = new THREE.Mesh(glowGeo, glowMat);
+scene.add(glow);
+
+// Orbiting skill nodes
+const orbitGroup = new THREE.Group();
+scene.add(orbitGroup);
+const nodeMeshes = [];
+const nodeMats = [];
+SKILLS.forEach((name, i) => {
+  const angle = (i / SKILLS.length) * Math.PI * 2;
+  const radius = 26;
+  const nodeGeo = new THREE.SphereGeometry(0.6, 12, 12);
+  const nodeMat = new THREE.MeshBasicMaterial({ color: COLORS.Booting, transparent: true, opacity: 0.75 });
+  const node = new THREE.Mesh(nodeGeo, nodeMat);
+  node.position.set(Math.cos(angle) * radius, Math.sin(angle * 1.7) * 6, Math.sin(angle) * radius);
+  orbitGroup.add(node);
+  nodeMeshes.push(node);
+  nodeMats.push(nodeMat);
+
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), node.position]);
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x3a3a45, transparent: true, opacity: 0.35 });
+  orbitGroup.add(new THREE.Line(lineGeo, lineMat));
+});
+
+let currentColor = COLORS.Booting;
+window.updateGhostState = function(word, detail) {
+  const color = COLORS[word] !== undefined ? COLORS[word] : COLORS.Booting;
+  currentColor = color;
+  coreMat.color.setHex(color);
+  glowMat.color.setHex(color);
+  nodeMats.forEach(m => m.color.setHex(color));
+  document.getElementById("word").textContent = word;
+  document.getElementById("detail").textContent = detail || "";
+  document.getElementById("dot").style.background = "#" + color.toString(16).padStart(6, "0");
+};
+
+let t = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  t += 0.01;
+  stars.rotation.y += 0.0006;
+  dust.rotation.y += 0.0015;
+  orbitGroup.rotation.y += 0.0025;
+  core.rotation.y += 0.004;
+  core.rotation.x += 0.0015;
+  const pulse = 1 + Math.sin(t * 2) * 0.04;
+  core.scale.setScalar(pulse);
+  glow.scale.setScalar(pulse * 1.03);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
