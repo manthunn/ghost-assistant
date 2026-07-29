@@ -1,53 +1,49 @@
-import json
-import ollama
+import os
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 from .skills import TOOLS, FUNCTIONS
 
-MODEL = "llama3.1"
+load_dotenv()
+
+MODEL = "gemini-3.6-flash"
 
 SYSTEM = (
-    "You are Ghost, a personal AI assistant running locally on the user's PC. "
+    "You are Ghost, a personal AI assistant running on the user's PC. "
     "You have real tools: use them whenever the user asks for an action or live "
     "information instead of saying you can't. Chain multiple tools if needed. "
     "Spoken replies must be short - 1 to 3 sentences - summarizing what you did "
     "or found. Never read out long lists or URLs; summarize them."
 )
 
-history = [{"role": "system", "content": SYSTEM}]
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+_chat = None
 
-def _get(obj, key, default=None):
-    try:
-        v = obj[key]
-        return v if v is not None else default
-    except Exception:
-        return getattr(obj, key, default)
+def _get_chat():
+    global _chat
+    if _chat is None:
+        gemini_tools = [types.Tool(function_declarations=[t["function"] for t in TOOLS])]
+        config = types.GenerateContentConfig(system_instruction=SYSTEM, tools=gemini_tools)
+        _chat = client.chats.create(model=MODEL, config=config)
+    return _chat
 
 def think(user_input, status=None):
-    history.append({"role": "user", "content": user_input})
+    chat = _get_chat()
+    resp = chat.send_message(user_input)
     for _ in range(6):  # allows chaining up to 6 tool calls
-        resp = ollama.chat(model=MODEL, messages=history, tools=TOOLS,
-                            options={"num_ctx": 8192})
-        msg = resp["message"]
-        calls = _get(msg, "tool_calls")
+        calls = resp.function_calls
         if not calls:
-            reply = _get(msg, "content", "") or "Done."
-            history.append({"role": "assistant", "content": reply})
-            return reply
-        history.append(msg)
+            return resp.text or "Done."
+        parts = []
         for c in calls:
-            fn_name = _get(_get(c, "function"), "name")
-            args = _get(_get(c, "function"), "arguments") or {}
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except json.JSONDecodeError:
-                    args = {}
             if status:
-                status(f"{fn_name}")
-            print(f"  ⚙️ {fn_name}({args})")
+                status(c.name)
+            print(f"  ⚙️ {c.name}({c.args})")
             try:
-                result = str(FUNCTIONS[fn_name](**args))
+                result = str(FUNCTIONS[c.name](**c.args))
             except Exception as e:
                 result = f"Tool error: {e}"
-            history.append({"role": "tool", "name": fn_name,
-                            "content": result[:4000]})
+            parts.append(types.Part.from_function_response(
+                name=c.name, response={"result": result[:4000]}))
+        resp = chat.send_message(parts)
     return "That task needed too many steps - try breaking it down."

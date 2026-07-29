@@ -7,3 +7,5 @@ keyboard
 requests
 beautifulsoup4
 ddgs
+google-genai
+python-dotenv

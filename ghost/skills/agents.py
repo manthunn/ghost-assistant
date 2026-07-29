@@ -1,7 +1,7 @@
-import ollama
+from google.genai import types
 from . import register
+from ..brain import client, MODEL
 
-MODEL = "llama3.1"
 AGENTS = {
     "researcher": "You are a research agent. Investigate the task and return a concise, factual briefing with key points.",
     "writer": "You are a writing agent. Produce polished final text for the task. Return only the text.",
@@ -17,7 +17,6 @@ AGENTS = {
         "required": ["agent", "task"]}})
 def delegate_task(agent: str, task: str):
     system = AGENTS.get(agent, AGENTS["researcher"])
-    r = ollama.chat(model=MODEL, messages=[
-        {"role": "system", "content": system},
-        {"role": "user", "content": task}])
-    return f"[{agent} agent report]\n" + r["message"]["content"][:2500]
+    r = client.models.generate_content(model=MODEL, contents=task,
+        config=types.GenerateContentConfig(system_instruction=system))
+    return f"[{agent} agent report]\n" + (r.text or "")[:2500]

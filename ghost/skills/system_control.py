@@ -1,29 +1,80 @@
 import os
 import subprocess
 import pathlib
+import shutil
+import winreg
 from . import register
 
 HOME = pathlib.Path.home()
 FOLDERS = {"desktop": HOME / "Desktop", "downloads": HOME / "Downloads",
            "documents": HOME / "OneDrive" / "Documents"}
-APPS = {"notepad": "notepad", "calculator": "calc", "chrome": "chrome",
-        "spotify": "spotify", "vs code": "code", "vscode": "code",
-        "edge": "msedge", "explorer": "explorer", "settings": "ms-settings:"}
+# Friendly shortcuts for common built-in commands that don't need file resolution.
+ALIASES = {"notepad": "notepad", "calculator": "calc", "chrome": "chrome",
+           "spotify": "spotify", "vs code": "code", "vscode": "code",
+           "edge": "msedge", "explorer": "explorer", "settings": "ms-settings:"}
 DANGEROUS = ["format", "del ", "remove-item", "rm ", "rmdir", "shutdown",
              "diskpart", "reg ", "bcdedit"]
 
+def _app_paths_lookup(name):
+    for exe in (name, f"{name}.exe"):
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                key = winreg.OpenKey(
+                    hive, rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe}")
+                path, _ = winreg.QueryValueEx(key, "")
+                if path and pathlib.Path(path).exists():
+                    return path
+            except OSError:
+                continue
+    return None
+
+def _start_menu_lookup(name):
+    roots = [
+        pathlib.Path(os.environ.get("ProgramData", "")) / "Microsoft/Windows/Start Menu/Programs",
+        pathlib.Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+    ]
+    target = name.lower().replace(" ", "")
+    fallback = None
+    for root in roots:
+        if not root.exists():
+            continue
+        for shortcut in root.rglob("*.lnk"):
+            stem = shortcut.stem.lower().replace(" ", "")
+            if target == stem:
+                return shortcut
+            if target in stem and fallback is None:
+                fallback = shortcut
+    return fallback
+
+def _resolve(name: str):
+    key = name.lower().strip()
+    if key in ALIASES:
+        return ALIASES[key]
+    which = shutil.which(name)
+    if which:
+        return which
+    app_path = _app_paths_lookup(key)
+    if app_path:
+        return app_path
+    shortcut = _start_menu_lookup(name)
+    if shortcut:
+        return str(shortcut)
+    return None
+
 @register({"name": "open_app",
-    "description": "Open an application on the PC, e.g. notepad, chrome, spotify, vs code, calculator.",
+    "description": "Open an application installed on the PC by name, e.g. notepad, chrome, vivaldi, spotify, vs code, calculator.",
     "parameters": {"type": "object", "properties": {
         "name": {"type": "string", "description": "the app to open"}},
         "required": ["name"]}})
 def open_app(name: str):
-    cmd = APPS.get(name.lower().strip(), name)
+    target = _resolve(name)
+    if not target:
+        return f"Couldn't find an app called '{name}' installed on this PC."
     try:
-        os.startfile(cmd)
-    except OSError:
-        subprocess.Popen(f'start "" "{cmd}"', shell=True)
-    return f"Opened {name}."
+        os.startfile(target)
+        return f"Opened {name}."
+    except OSError as e:
+        return f"Found '{name}' but couldn't launch it: {e}"
 
 @register({"name": "list_files",
     "description": "List files in a folder: desktop, downloads, documents, or a full path.",
