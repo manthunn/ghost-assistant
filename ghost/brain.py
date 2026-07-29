@@ -24,7 +24,8 @@ def _get(obj, key, default=None):
 def think(user_input, status=None):
     history.append({"role": "user", "content": user_input})
     for _ in range(6):  # allows chaining up to 6 tool calls
-        resp = ollama.chat(model=MODEL, messages=history, tools=TOOLS)
+        resp = ollama.chat(model=MODEL, messages=history, tools=TOOLS,
+                            options={"num_ctx": 8192})
         msg = resp["message"]
         calls = _get(msg, "tool_calls")
         if not calls:
