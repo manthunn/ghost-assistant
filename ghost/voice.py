@@ -10,20 +10,28 @@ MAX_SECS = 30
 WAIT_SECS = 600          # hands-free: waits up to 10 min for speech
 
 _whisper = None
+_on_gpu = False
 
 # Domain vocabulary that's easy to mis-hear otherwise (app names, places, etc.)
 VOCAB_HINT = ("Ghost, Vivaldi, Notepad, Spotify, VS Code, Deakin Hall, Clayton, "
               "Monash, AFL, NRL")
 
+def _load_cpu():
+    global _whisper, _on_gpu
+    _whisper = WhisperModel("small.en", device="cpu", compute_type="int8")
+    _on_gpu = False
+    return _whisper
+
 def load_ears():
-    global _whisper
+    global _whisper, _on_gpu
     if _whisper is None:
         print("Loading ears...")
         try:
             _whisper = WhisperModel("small.en", device="cuda", compute_type="float16")
+            _on_gpu = True
         except Exception as e:
             print(f"  GPU unavailable for Whisper ({e}), falling back to CPU.")
-            _whisper = WhisperModel("small.en", device="cpu", compute_type="int8")
+            _load_cpu()
     return _whisper
 
 def speak(text):
@@ -59,10 +67,20 @@ def _record_until_silence():
                     break
     return np.concatenate(chunks).flatten()
 
+def _transcribe(audio):
+    segments, _ = load_ears().transcribe(
+        audio, language="en", vad_filter=True, initial_prompt=VOCAB_HINT)
+    return " ".join(s.text for s in segments).strip()
+
 def listen():
     audio = _record_until_silence()
     if audio is None:
         return ""
-    segments, _ = load_ears().transcribe(
-        audio, language="en", vad_filter=True, initial_prompt=VOCAB_HINT)
-    return " ".join(s.text for s in segments).strip()
+    try:
+        return _transcribe(audio)
+    except Exception as e:
+        if not _on_gpu:
+            raise
+        print(f"  Whisper GPU transcription failed ({e}), switching to CPU for this session.")
+        _load_cpu()
+        return _transcribe(audio)
