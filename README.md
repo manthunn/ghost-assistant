@@ -1,57 +1,73 @@
 # Ghost — Fully Local AI Assistant
 
-A privacy-first voice assistant that runs entirely on your own machine. No cloud APIs, no data leaving your computer: local LLM inference, local speech recognition, local text-to-speech, and a modular skills engine that lets Ghost actually *do* things — control the system, automate the browser, search the web, manage media, and remember things between sessions.
+A privacy-first voice assistant that runs entirely on your own machine. No cloud round-trips for the core loop: local LLM inference, local speech recognition, offline text-to-speech, and a modular skills engine that lets Ghost actually *do* things — control the system, automate the browser, manage media, delegate to sub-agents, and remember things between sessions.
 
 Built from scratch in Python on Windows.
 
 ## Why local?
 
-Most assistants stream your voice and data to someone else's servers. Ghost doesn't. Everything — the language model, the speech pipeline, the memory — runs on local hardware. That constraint shaped the whole architecture: model serving has to be memory-efficient, the speech loop has to be fast enough to feel conversational, and every capability has to work without an internet-dependent API.
+Most assistants stream your voice and data to someone else's servers. Ghost doesn't. The language model, the speech pipeline, and the memory all run on local hardware. That constraint shaped the architecture: model serving has to be memory-efficient, the speech loop has to be fast enough to feel conversational, and every capability has to work as a local module.
 
 ## Features
 
-- **Local LLM** — [Llama 3.1](https://ollama.com) served through Ollama, with context length tuned (`num_ctx=8192`) to stay within memory limits during long sessions
-- **Real-time speech recognition** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for low-latency transcription
-- **Native text-to-speech** — Windows TTS for spoken responses
-- **Modular skills engine** — decorator-based skill registration with auto-loading modules:
-  - System control (apps, volume, power, etc.)
-  - Browser automation
-  - Web search
-  - Spotify / media control
-  - Multi-agent delegation (Ghost can spin up sub-agents for subtasks)
-  - Persistent memory across sessions
-- **Status overlay** — lightweight tkinter UI showing listening/thinking/speaking state
+- **Local LLM brain** — Llama 3.1 served through [Ollama](https://ollama.com), with context length managed (`num_ctx`) to stay stable across long sessions
+- **Real-time speech input** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for low-latency transcription ("ears")
+- **Voice output** — spoken replies on every turn
+- **Modular skills engine** — auto-loaded skill modules, discovered at boot:
+  - `system_control` — apps, system actions
+  - `browser` — browser automation
+  - `media` — playback / media control
+  - `agents` — multi-agent delegation for subtasks
+  - `memory` — persistent memory across sessions
+- **Live status overlay** — a lightweight always-on-top window showing Ghost's state in real time (Listening → Thinking → Working → Speaking)
+- **Threaded architecture** — UI runs on the main thread; the assistant loop runs on a daemon thread and pushes status updates into the overlay via callbacks
 
-## Architecture
+## Project structure
 
 ```
-Voice input ──▶ faster-whisper (STT)
-                     │
-                     ▼
-              Intent + prompt ──▶ Ollama (Llama 3.1, local)
-                     │                     │
-                     ▼                     ▼
-              Skills engine ◀──── tool / skill calls
-              (auto-loaded modules)
-                     │
-                     ▼
-              Action + response ──▶ Windows TTS ──▶ Voice output
-                     │
-                     ▼
-              Persistent memory store
+ghost-assistant/
+├── main.py              # entry point: wires UI + assistant loop threads
+├── ghost/
+│   ├── brain.py         # LLM layer (Ollama / Llama 3.1)
+│   ├── voice.py         # speech: faster-whisper in, TTS out
+│   ├── ui.py            # status overlay (GhostUI)
+│   └── skills/
+│       ├── agents.py
+│       ├── browser.py
+│       ├── media.py
+│       ├── memory.py
+│       └── system_control.py
+├── requirements.txt
+└── .env                 # local config/keys — never committed
 ```
 
-Skills are plain Python modules dropped into the skills directory. A decorator registers each function with its trigger metadata, and the loader picks them up automatically at startup — adding a capability means writing one function, not touching the core.
+## How a turn works
 
+```
+mic ──▶ voice.listen() (faster-whisper)
+              │
+              ▼
+        brain.think(heard, status=cb) ──▶ Ollama (Llama 3.1)
+              │                                │
+              ▼                                ▼
+        skills engine ◀───── skill / tool calls
+              │
+              ▼
+        reply ──▶ voice.speak() ──▶ audio out
+              │
+              ▼
+        overlay updates: Listening → Thinking → Working → Speaking
+```
 
+Skills are plain Python modules in `ghost/skills/`. The loader (`load_all()`) discovers and registers them at boot — adding a capability means dropping in one module, not touching the core.
 
 ## Getting started
 
 ### Requirements
 - Windows 10/11
-- Python 3.10+ 
+- Python 3.10+ (developed on 3.14)
 - [Ollama](https://ollama.com) installed and running
-- A machine with enough RAM/VRAM for Llama 3.1 8B 
+- Enough RAM for Llama 3.1 (default 8B tag)
 
 ### Setup
 ```bash
@@ -62,11 +78,13 @@ ollama pull llama3.1
 python main.py
 ```
 
+Say **"goodbye ghost"** to exit.
+
 ## Lessons from building this
 
-- **Local model serving is a memory problem first.** Early versions crashed under load until I capped Ollama's context window (`options={"num_ctx": 8192}`) — unbounded context is the silent killer of local LLM apps.
-- **Components that work alone break together.** The STT loop, model calls, TTS, and overlay all compete for the main thread and for memory; most of the real engineering was in making them coexist.
-- **Debugging *is* the work.** The first version of almost every subsystem failed. The project taught me to treat tracing and fixing as the core loop, not the cleanup phase.
+- **Local model serving is a memory problem first.** Early versions crashed under load until the context window was capped (`num_ctx`) — unbounded context is the silent killer of local LLM apps.
+- **Components that work alone break together.** The STT loop, model calls, TTS, and overlay compete for threads and memory; most of the real engineering was making them coexist, which is why the UI and assistant loop live on separate threads.
+- **Debugging *is* the work.** The first version of almost every subsystem failed. Tracing and fixing is the core loop, not the cleanup phase.
 
 ## Roadmap
 
