@@ -2,37 +2,26 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+import asyncio
 import threading
-from ghost import voice, brain
+from ghost import live_voice
 from ghost.ui import GhostUI
 from ghost.skills import load_all
 
-def assistant_loop(ui):
+def assistant_loop(ui, stop_event):
     ui.set("🟣 Loading skills...")
     print("👻 Ghost booting...")
     load_all()
-    voice.load_ears()
     ui.set("🟢 Listening", "say 'goodbye ghost' to exit")
-    voice.speak("Ghost online.")
-    while True:
-        ui.set("🟢 Listening")
-        heard = voice.listen()
-        if not heard:
-            continue
-        print(f"\nYou: {heard}")
-        if "goodbye ghost" in heard.lower():
-            ui.set("⚫ Offline")
-            voice.speak("Goodbye.")
-            break
-        ui.set("🟡 Thinking", heard)
-        reply = brain.think(heard,
-                            status=lambda d: ui.set("🔵 Working", d))
-        print(f"Ghost: {reply}\n")
-        ui.set("🟣 Speaking")
-        voice.speak(reply)
+    try:
+        asyncio.run(live_voice.run(ui, stop_event))
+    except Exception as e:
+        print(f"Ghost session ended with an error: {e}")
+    ui.set("⚫ Offline")
     ui.root.after(300, ui.root.destroy)
 
 if __name__ == "__main__":
-    ui = GhostUI()
-    threading.Thread(target=assistant_loop, args=(ui,), daemon=True).start()
+    stop_event = threading.Event()
+    ui = GhostUI(on_close=stop_event.set)
+    threading.Thread(target=assistant_loop, args=(ui, stop_event), daemon=True).start()
     ui.run()

@@ -33,7 +33,8 @@ def _status_word(state_text):
 class GhostUI:
     WIDTH, HEIGHT = 260, 64
 
-    def __init__(self):
+    def __init__(self, on_close=None):
+        self.on_close = on_close
         self.q = queue.Queue()
         self.root = tk.Tk()
         self.root.title("Ghost")
@@ -62,13 +63,18 @@ class GhostUI:
                               lambda e: self.canvas.itemconfig(self.close_btn, fill=CLOSE_HOVER))
         self.canvas.tag_bind(self.close_btn, "<Leave>",
                               lambda e: self.canvas.itemconfig(self.close_btn, fill=DETAIL))
-        self.canvas.tag_bind(self.close_btn, "<Button-1>", lambda e: self.root.destroy())
+        self.canvas.tag_bind(self.close_btn, "<Button-1>", self._on_close_click)
 
         self.canvas.bind("<Button-1>", self._drag_start)
         self.canvas.bind("<B1-Motion>", self._drag_move)
         self._drag = (0, 0)
 
         self.root.after(100, self._poll)
+
+    def _on_close_click(self, event):
+        if self.on_close:
+            self.on_close()
+        self.root.destroy()
 
     def _drag_start(self, event):
         self._drag = (event.x, event.y)
