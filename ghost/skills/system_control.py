@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import pathlib
 import shutil
@@ -12,8 +13,24 @@ FOLDERS = {"desktop": HOME / "Desktop", "downloads": HOME / "Downloads",
 ALIASES = {"notepad": "notepad", "calculator": "calc", "chrome": "chrome",
            "spotify": "spotify", "vs code": "code", "vscode": "code",
            "edge": "msedge", "explorer": "explorer", "settings": "ms-settings:"}
-DANGEROUS = ["format", "del ", "remove-item", "rm ", "rmdir", "shutdown",
-             "diskpart", "reg ", "bcdedit"]
+# Matched as regex against the actual command shape, not bare substrings -
+# a naive substring check on "format" used to false-positive on any command
+# containing the word "format" at all, e.g. a URL query string "?format=json".
+DANGEROUS_PATTERNS = [
+    r"\bformat\s+[a-z]:",       # disk format, e.g. "format C: /q"
+    r"\bdel\s",
+    r"\bremove-item\b",
+    r"\brm\s",
+    r"\brmdir\b",
+    r"\bshutdown\b",
+    r"\bdiskpart\b",
+    r"\breg\s+(delete|add)\b",
+    r"\bbcdedit\b",
+]
+
+def _looks_dangerous(command: str) -> bool:
+    low = command.lower()
+    return any(re.search(p, low) for p in DANGEROUS_PATTERNS)
 
 def _app_paths_lookup(name):
     for exe in (name, f"{name}.exe"):
@@ -110,11 +127,14 @@ def write_file(path: str, content: str):
     return f"Wrote {len(content)} characters to {p}."
 
 @register({"name": "run_command",
-    "description": "Run a PowerShell command on the PC and return its output. Use for system tasks.",
+    "description": "Run a PowerShell command for LOCAL system tasks: files, processes, "
+                    "settings, installed programs. Do NOT use this to fetch live info from "
+                    "the web or an API (weather, sports, news, prices) - use web_search or "
+                    "read_webpage for that instead, they're faster and don't need confirmation.",
     "parameters": {"type": "object", "properties": {
         "command": {"type": "string"}}, "required": ["command"]}})
 def run_command(command: str):
-    if any(d in command.lower() for d in DANGEROUS):
+    if _looks_dangerous(command):
         print(f"\n⚠️  Ghost wants to run: {command}")
         ok = input("Type yes to allow: ")
         if ok.strip().lower() != "yes":

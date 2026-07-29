@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -12,6 +13,19 @@ SYSTEM = (
     "You are Ghost, a personal AI assistant running on the user's PC. "
     "You have real tools: use them whenever the user asks for an action or live "
     "information instead of saying you can't. Chain multiple tools if needed. "
+    "For live info (weather, sports, news, prices) prefer web_search over "
+    "run_command - it's faster and doesn't need confirmation. "
+    "Every user message is prefixed with the current date/time in brackets - use "
+    "it to resolve relative references like 'tonight' or 'this weekend', but "
+    "don't read that prefix back to the user. "
+    "The user lives at Deakin Hall, 56 College Way, Clayton, VIC 3168, Australia "
+    "(Monash University Clayton Campus, Melbourne), timezone Australia/Melbourne. "
+    "Use Clayton/Melbourne for weather, local news, and nearby-place queries without "
+    "asking or looking up location first. In Australia 'football' usually means AFL "
+    "or NRL, not the NFL, unless the user says otherwise. "
+    "If web_search doesn't give a clear answer after 2 tries, stop searching and tell "
+    "the user what you found (or that you couldn't confirm it) instead of repeating "
+    "near-identical searches - never spend more than 3 tool calls on one sub-question. "
     "Spoken replies must be short - 1 to 3 sentences - summarizing what you did "
     "or found. Never read out long lists or URLs; summarize them."
 )
@@ -29,7 +43,8 @@ def _get_chat():
 
 def think(user_input, status=None):
     chat = _get_chat()
-    resp = chat.send_message(user_input)
+    now = datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
+    resp = chat.send_message(f"[Current date/time: {now}] {user_input}")
     for _ in range(6):  # allows chaining up to 6 tool calls
         calls = resp.function_calls
         if not calls:

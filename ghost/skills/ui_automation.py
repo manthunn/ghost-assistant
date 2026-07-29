@@ -14,7 +14,7 @@ def _set_clipboard(text):
 # before Ghost is allowed to click/activate it - covers money, deletion,
 # and anything else that can't be easily undone.
 DANGEROUS_UI = [
-    "delete", "remove", "uninstall", "format", "confirm", "pay", "buy",
+    "delete", "remove", "uninstall", "confirm", "pay", "buy",
     "purchase", "checkout", "order now", "place order", "transfer",
     "send money", "subscribe", "sign up", "submit", "empty trash",
     "factory reset", "shut down",
