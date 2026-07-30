@@ -90,50 +90,54 @@ async def run(ui, stop_event):
         mic_task.add_done_callback(_mic_task_done)
         ghost_line_open = False
         try:
-            async for response in session.receive():
-                if stop_event.is_set():
-                    break
-
-                sc = response.server_content
-                if sc:
-                    if sc.interrupted:
-                        player.clear()
-                    if sc.input_transcription and sc.input_transcription.text:
-                        print(f"\nYou: {sc.input_transcription.text}")
-                    if sc.model_turn:
-                        ui.set("🟣 Speaking")
-                        for part in sc.model_turn.parts:
-                            if part.inline_data:
-                                player.feed(part.inline_data.data)
-                    if sc.output_transcription and sc.output_transcription.text:
-                        if not ghost_line_open:
-                            print("Ghost: ", end="", flush=True)
-                            ghost_line_open = True
-                        print(sc.output_transcription.text, end="", flush=True)
-                    if sc.turn_complete:
-                        print()
-                        ghost_line_open = False
-                        ui.set("🟢 Listening")
-
-                if response.tool_call:
-                    ui.set("🔵 Working")
-                    function_responses = []
-                    should_stop = False
-                    for fc in response.tool_call.function_calls:
-                        print(f"  ⚙️ {fc.name}({fc.args})")
-                        if fc.name == "end_conversation":
-                            should_stop = True
-                        try:
-                            result = str(FUNCTIONS[fc.name](**(fc.args or {})))
-                        except Exception as e:
-                            result = f"Tool error: {e}"
-                        function_responses.append(types.FunctionResponse(
-                            name=fc.name, id=fc.id, response={"result": result[:4000]}))
-                    await session.send_tool_response(function_responses=function_responses)
-                    if should_stop:
-                        stop_event.set()
+            # session.receive() yields exactly ONE model turn then ends (it breaks
+            # on turn_complete internally), so it must be re-entered per turn -
+            # otherwise the loop exits after the first reply and Ghost goes deaf.
+            while not stop_event.is_set():
+                async for response in session.receive():
+                    if stop_event.is_set():
                         break
-                    ui.set("🟢 Listening")
+
+                    sc = response.server_content
+                    if sc:
+                        if sc.interrupted:
+                            player.clear()
+                        if sc.input_transcription and sc.input_transcription.text:
+                            print(f"\nYou: {sc.input_transcription.text}")
+                        if sc.model_turn:
+                            ui.set("🟣 Speaking")
+                            for part in sc.model_turn.parts:
+                                if part.inline_data:
+                                    player.feed(part.inline_data.data)
+                        if sc.output_transcription and sc.output_transcription.text:
+                            if not ghost_line_open:
+                                print("Ghost: ", end="", flush=True)
+                                ghost_line_open = True
+                            print(sc.output_transcription.text, end="", flush=True)
+                        if sc.turn_complete:
+                            print()
+                            ghost_line_open = False
+                            ui.set("🟢 Listening")
+
+                    if response.tool_call:
+                        ui.set("🔵 Working")
+                        function_responses = []
+                        should_stop = False
+                        for fc in response.tool_call.function_calls:
+                            print(f"  ⚙️ {fc.name}({fc.args})")
+                            if fc.name == "end_conversation":
+                                should_stop = True
+                            try:
+                                result = str(FUNCTIONS[fc.name](**(fc.args or {})))
+                            except Exception as e:
+                                result = f"Tool error: {e}"
+                            function_responses.append(types.FunctionResponse(
+                                name=fc.name, id=fc.id, response={"result": result[:4000]}))
+                        await session.send_tool_response(function_responses=function_responses)
+                        if should_stop:
+                            stop_event.set()
+                            break
+                        ui.set("🟢 Listening")
         finally:
             mic_task.cancel()
             mic_stream.stop()
