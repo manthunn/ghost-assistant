@@ -37,6 +37,10 @@ class AudioPlayer:
         with self.lock:
             self.buf.clear()
 
+    def is_active(self):
+        with self.lock:
+            return len(self.buf) > 0
+
     def stop(self):
         self.stream.stop()
         self.stream.close()
@@ -46,8 +50,11 @@ async def _mic_loop(session, mic_q, stop_event):
         chunk = await asyncio.to_thread(mic_q.get)
         if chunk is None:
             break
-        await session.send_realtime_input(
-            audio=types.Blob(data=chunk, mime_type=f"audio/pcm;rate={IN_RATE}"))
+        try:
+            await session.send_realtime_input(
+                audio=types.Blob(data=chunk, mime_type=f"audio/pcm;rate={IN_RATE}"))
+        except Exception as e:
+            print(f"  [mic send error, continuing] {e}")
 
 async def run(ui, stop_event):
     gemini_tools = [types.Tool(function_declarations=[t["function"] for t in TOOLS])]
@@ -61,10 +68,12 @@ async def run(ui, stop_event):
 
     player = AudioPlayer()
     mic_q = queue.Queue()
-    speaking = threading.Event()  # muted while set, to avoid the speaker->mic feedback loop
 
     def mic_callback(indata, frames, time_info, status):
-        if speaking.is_set():
+        # Muted whenever there's still unplayed Ghost audio queued, to avoid the
+        # speaker->mic feedback loop. Tied to actual playback state (not a server
+        # event) so it can't get stuck muted if a turn-completion signal is missed.
+        if player.is_active():
             return
         mic_q.put_nowait(bytes(indata))
 
@@ -75,6 +84,10 @@ async def run(ui, stop_event):
         mic_stream.start()
         ui.set("🟢 Listening")
         mic_task = asyncio.create_task(_mic_loop(session, mic_q, stop_event))
+        def _mic_task_done(t):
+            if not t.cancelled() and t.exception():
+                print(f"  [mic loop died unexpectedly] {t.exception()}")
+        mic_task.add_done_callback(_mic_task_done)
         ghost_line_open = False
         try:
             async for response in session.receive():
@@ -85,11 +98,9 @@ async def run(ui, stop_event):
                 if sc:
                     if sc.interrupted:
                         player.clear()
-                        speaking.clear()
                     if sc.input_transcription and sc.input_transcription.text:
                         print(f"\nYou: {sc.input_transcription.text}")
                     if sc.model_turn:
-                        speaking.set()
                         ui.set("🟣 Speaking")
                         for part in sc.model_turn.parts:
                             if part.inline_data:
@@ -102,11 +113,9 @@ async def run(ui, stop_event):
                     if sc.turn_complete:
                         print()
                         ghost_line_open = False
-                        speaking.clear()
                         ui.set("🟢 Listening")
 
                 if response.tool_call:
-                    speaking.clear()
                     ui.set("🔵 Working")
                     function_responses = []
                     should_stop = False
