@@ -73,6 +73,13 @@ def _inbox():
     except Exception as e:
         return f"(couldn't read inbox: {e})"
 
+def _calendar():
+    try:
+        from .calendar_feed import briefing_section
+        return briefing_section(7)
+    except Exception as e:
+        return f"(couldn't read calendar: {e})"
+
 def _todos():
     try:
         from .todo import pending
@@ -102,7 +109,5 @@ def daily_briefing():
         f"WEATHER SEARCH RESULTS:\n{_weather()}",
         f"INBOX:\n{_inbox()}",
         f"TO-DO LIST:\n{_todos()}",
-        "CLASSES & ASSIGNMENTS: no calendar feed configured yet - tell the user "
-        "you can include his Monash timetable and assignment deadlines once he "
-        "sets up a calendar feed, and don't guess at them.",
+        f"UNIVERSITY CALENDAR (next 7 days):\n{_calendar()}",
     ])
