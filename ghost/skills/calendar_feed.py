@@ -39,6 +39,22 @@ def _fetch(env_key):
     _cache[env_key] = (datetime.now(), r.text)
     return r.text
 
+def _to_local(w):
+    """Feeds carry UTC/tz-aware timestamps; render them in the machine's local
+    time or a 10am class reads as midnight. All-day dates stay as-is."""
+    if isinstance(w, datetime) and w.tzinfo is not None:
+        return w.astimezone()
+    return w
+
+def _sort_key(w):
+    """Sortable across tz-aware datetimes, naive datetimes and all-day dates
+    (comparing aware and naive datetimes directly raises TypeError)."""
+    if isinstance(w, datetime):
+        return w.timestamp() if w.tzinfo else w.astimezone().timestamp()
+    if isinstance(w, date):
+        return datetime.combine(w, datetime.min.time()).astimezone().timestamp()
+    return float("inf")
+
 def _events_between(ics_text, start, end):
     import icalendar
     import recurring_ical_events
@@ -46,22 +62,18 @@ def _events_between(ics_text, start, end):
     out = []
     for ev in recurring_ical_events.of(cal).between(start, end):
         dt = ev.get("DTSTART")
-        when = dt.dt if dt else None
         out.append({
             "summary": str(ev.get("SUMMARY", "(untitled)")),
             "location": str(ev.get("LOCATION", "") or ""),
-            "when": when,
+            "when": _to_local(dt.dt) if dt else None,
         })
-    out.sort(key=lambda e: (
-        e["when"] if isinstance(e["when"], datetime)
-        else datetime.combine(e["when"], datetime.min.time()) if isinstance(e["when"], date)
-        else datetime.max))
+    out.sort(key=lambda e: _sort_key(e["when"]))
     return out
 
 def _fmt(e):
     w = e["when"]
     if isinstance(w, datetime):
-        stamp = w.strftime("%a %d %b %I:%M %p").replace(" 0", " ")
+        stamp = w.strftime("%a %d %b %I:%M %p").lstrip("0").replace(" 0", " ")
     elif isinstance(w, date):
         stamp = w.strftime("%a %d %b") + " (all day)"
     else:
@@ -71,7 +83,8 @@ def _fmt(e):
 
 def collect(days_ahead=7):
     """Returns {kind: [lines]} for configured feeds, plus which are missing."""
-    now = datetime.now()
+    # tz-aware so the window lines up with the feeds' UTC timestamps
+    now = datetime.now().astimezone()
     start, end = now - timedelta(hours=12), now + timedelta(days=days_ahead)
     result, missing = {}, []
     for kind, env_key in FEEDS.items():
