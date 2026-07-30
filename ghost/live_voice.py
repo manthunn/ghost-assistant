@@ -8,6 +8,12 @@ from .brain import client, SYSTEM
 from .skills import TOOLS, FUNCTIONS
 
 MODEL = "gemini-3.1-flash-live-preview"
+# Pinned so Ghost sounds identical every session - without an explicit
+# speech_config the Live API picks its own voice and it drifts between runs.
+# Other steady/assistant-ish options: Rasalgethi (informative),
+# Sadaltager (knowledgeable), Iapetus (clear), Alnilam or Orus (firm),
+# Schedar (even), Sulafat (warm). Full list: 30 prebuilt voices.
+VOICE = "Charon"
 IN_RATE = 16000
 OUT_RATE = 24000
 BLOCK = 1600  # 100ms of audio at 16kHz
@@ -128,6 +134,9 @@ async def run(ui, stop_event):
         response_modalities=["AUDIO"],
         system_instruction=SYSTEM,
         tools=gemini_tools,
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE))),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )
