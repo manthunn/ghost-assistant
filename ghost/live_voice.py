@@ -61,8 +61,11 @@ async def run(ui, stop_event):
 
     player = AudioPlayer()
     mic_q = queue.Queue()
+    speaking = threading.Event()  # muted while set, to avoid the speaker->mic feedback loop
 
     def mic_callback(indata, frames, time_info, status):
+        if speaking.is_set():
+            return
         mic_q.put_nowait(bytes(indata))
 
     mic_stream = sd.RawInputStream(samplerate=IN_RATE, channels=1, dtype="int16",
@@ -72,6 +75,7 @@ async def run(ui, stop_event):
         mic_stream.start()
         ui.set("🟢 Listening")
         mic_task = asyncio.create_task(_mic_loop(session, mic_q, stop_event))
+        ghost_line_open = False
         try:
             async for response in session.receive():
                 if stop_event.is_set():
@@ -81,20 +85,28 @@ async def run(ui, stop_event):
                 if sc:
                     if sc.interrupted:
                         player.clear()
+                        speaking.clear()
                     if sc.input_transcription and sc.input_transcription.text:
                         print(f"\nYou: {sc.input_transcription.text}")
                     if sc.model_turn:
+                        speaking.set()
                         ui.set("🟣 Speaking")
                         for part in sc.model_turn.parts:
                             if part.inline_data:
                                 player.feed(part.inline_data.data)
                     if sc.output_transcription and sc.output_transcription.text:
-                        print(f"Ghost: {sc.output_transcription.text}", end="", flush=True)
+                        if not ghost_line_open:
+                            print("Ghost: ", end="", flush=True)
+                            ghost_line_open = True
+                        print(sc.output_transcription.text, end="", flush=True)
                     if sc.turn_complete:
                         print()
+                        ghost_line_open = False
+                        speaking.clear()
                         ui.set("🟢 Listening")
 
                 if response.tool_call:
+                    speaking.clear()
                     ui.set("🔵 Working")
                     function_responses = []
                     should_stop = False
