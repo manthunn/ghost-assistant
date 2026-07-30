@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 venv/
 ghost/memory.json
+ghost/todo.json
+ghost/briefing_state.json

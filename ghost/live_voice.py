@@ -6,14 +6,15 @@ import sounddevice as sd
 from google.genai import types
 from .brain import client, SYSTEM
 from .skills import TOOLS, FUNCTIONS
+from .skills.briefing import should_brief
 
 MODEL = "gemini-3.1-flash-live-preview"
 # Pinned so Ghost sounds identical every session - without an explicit
 # speech_config the Live API picks its own voice and it drifts between runs.
-# Other steady/assistant-ish options: Rasalgethi (informative),
+# Other steady/assistant-ish options: Charon (informative),
 # Sadaltager (knowledgeable), Iapetus (clear), Alnilam or Orus (firm),
 # Schedar (even), Sulafat (warm). Full list: 30 prebuilt voices.
-VOICE = "Charon"
+VOICE = "Rasalgethi"
 IN_RATE = 16000
 OUT_RATE = 24000
 BLOCK = 1600  # 100ms of audio at 16kHz
@@ -167,6 +168,13 @@ async def run(ui, stop_event):
             asyncio.create_task(_receive_loop(session, ui, player, stop_event, activity)),
             asyncio.create_task(_idle_watchdog(activity, stop_event)),
         ]
+        # First session of the day (or 6h+ since the last): open with the briefing
+        # unprompted, rather than waiting to be asked.
+        if should_brief():
+            print("[first session in a while - delivering daily briefing]")
+            ui.set("🔵 Working", "daily briefing")
+            await session.send_realtime_input(
+                text="Give me my daily briefing for today.")
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for t in done:
