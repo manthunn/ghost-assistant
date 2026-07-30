@@ -8,8 +8,10 @@ read mail without any Azure app registration or OAuth setup.
 
 Read-only by design - sending mail is a separate, confirmation-gated concern.
 """
+import os
 import re
 import time
+import urllib.parse
 from . import register
 from .ui_automation import _find_window, _activate
 
@@ -23,6 +25,18 @@ _INVISIBLE = re.compile(
 def _clean(s, limit=None):
     out = " ".join(_INVISIBLE.sub("", s or "").split())
     return out[:limit] if limit else out
+
+def _window_titles():
+    from .ui_automation import _desktop
+    out = set()
+    try:
+        for w in _desktop().windows():
+            t = (w.window_text() or "").strip()
+            if t:
+                out.add(t)
+    except Exception:
+        pass
+    return out
 
 def _outlook_window():
     win = _find_window("Outlook")
@@ -78,6 +92,55 @@ def read_inbox(count: int = 5):
     if not out:
         return "The message list appears to be empty."
     return f"{len(out)} most recent inbox messages:\n" + "\n".join(out)
+
+MAILTO_LIMIT = 1800  # long mailto URLs get truncated by Windows/Outlook
+
+@register({"name": "compose_email",
+    "description": "Write an email and open it in Outlook, pre-filled and ready for the "
+                    "user to review and send. Use when the user wants to email someone. "
+                    "Ghost does not send it - the user reads it over and clicks Send "
+                    "themselves, so say so after composing.",
+    "parameters": {"type": "object", "properties": {
+        "to": {"type": "string", "description": "recipient email address(es), comma separated"},
+        "subject": {"type": "string"},
+        "body": {"type": "string", "description": "the full message text"},
+        "cc": {"type": "string", "description": "optional cc address(es)"}},
+        "required": ["to", "subject", "body"]}})
+def compose_email(to: str, subject: str, body: str, cc: str = ""):
+    to = _clean(to)
+    if "@" not in to:
+        return f"'{to}' doesn't look like an email address - I need a real recipient."
+    params = {"subject": subject or "", "body": body or ""}
+    if cc.strip():
+        params["cc"] = _clean(cc)
+    query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+    url = f"mailto:{urllib.parse.quote(to, safe='@,;')}?{query}"
+    if len(url) > MAILTO_LIMIT:
+        return (f"That message is too long to hand to Outlook this way "
+                f"({len(url)} chars, limit ~{MAILTO_LIMIT}). Ask me to shorten it.")
+    # startfile succeeding only means the shell accepted the URL - it says nothing
+    # about a draft window actually appearing. Snapshot windows and confirm.
+    before = _window_titles()
+    try:
+        os.startfile(url)
+    except OSError as e:
+        return f"Couldn't open a draft in Outlook: {e}"
+    appeared = None
+    for _ in range(12):
+        time.sleep(0.5)
+        new = _window_titles() - before
+        appeared = next((t for t in new if subject[:24].lower() in t.lower()
+                          or "outlook" in t.lower()), None)
+        if appeared:
+            break
+    preview = " ".join((body or "").split())[:90]
+    tail = (f"It is NOT sent - review it and press Send.")
+    if appeared:
+        return (f"Draft open in Outlook to {to}, subject '{subject}'. "
+                f"Body starts: \"{preview}...\". {tail}")
+    return (f"Handed the draft to Outlook for {to}, subject '{subject}', but couldn't "
+            f"confirm a compose window opened - it may be behind another window, or "
+            f"Outlook may still be starting. Tell the user to check Outlook. {tail}")
 
 @register({"name": "read_email",
     "description": "Open a specific email in Outlook and read its full body. Match "
