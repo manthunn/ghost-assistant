@@ -7,6 +7,7 @@ from google.genai import types
 from .brain import client, SYSTEM
 from .skills import TOOLS, FUNCTIONS
 from .skills.briefing import should_brief
+from .skills.vision import capture_screen_jpeg
 
 MODEL = "gemini-3.1-flash-live-preview"
 # Pinned so Ghost sounds identical every session - without an explicit
@@ -118,7 +119,17 @@ async def _receive_loop(session, ui, player, stop_event, activity):
                     if fc.name == "end_conversation":
                         should_stop = True
                     try:
-                        result = str(FUNCTIONS[fc.name](**(fc.args or {})))
+                        if fc.name == "look_at_screen":
+                            # A tool response can only carry text, so the frame goes in
+                            # as realtime video input instead; the model sees it on the
+                            # turn it generates after this response.
+                            frame = capture_screen_jpeg()
+                            await session.send_realtime_input(
+                                video=types.Blob(data=frame, mime_type="image/jpeg"))
+                            result = ("Screenshot of the user's screen has been provided. "
+                                      "Answer their question from what you can see in it.")
+                        else:
+                            result = str(FUNCTIONS[fc.name](**(fc.args or {})))
                     except Exception as e:
                         result = f"Tool error: {e}"
                     function_responses.append(types.FunctionResponse(
@@ -138,6 +149,9 @@ async def run(ui, stop_event):
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE))),
+        # MEDIUM is the balance point: LOW is too blurry to read on-screen code or
+        # error text, HIGH costs noticeably more tokens per frame.
+        media_resolution=types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )
