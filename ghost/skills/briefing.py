@@ -80,6 +80,13 @@ def _calendar():
     except Exception as e:
         return f"(couldn't read calendar: {e})"
 
+def _youtube():
+    try:
+        from .youtube import briefing_section
+        return briefing_section(24)
+    except Exception as e:
+        return f"(couldn't check YouTube: {e})"
+
 def _todos():
     try:
         from .todo import pending
@@ -93,21 +100,27 @@ def _todos():
         return f"(couldn't read to-do list: {e})"
 
 @register({"name": "daily_briefing",
-    "description": "Gather the user's morning briefing: today's date, the local "
-                    "weather, recent inbox messages, and outstanding to-do items. "
-                    "Use this when the user asks for their briefing/rundown, or at "
-                    "the start of a new day. Summarise it conversationally out loud - "
-                    "greet him by name, lead with the date and weather, then the "
-                    "important email and tasks. Keep it under about 8 sentences and "
-                    "skip anything that's empty or unavailable.",
+    "description": "Gather the user's morning briefing: today's date, local weather, "
+                    "classes and assignment deadlines, recent inbox messages, "
+                    "outstanding to-do items, and new videos from watched YouTube "
+                    "channels. Use this when the user asks for their briefing/rundown, "
+                    "or at the start of a new day. Summarise it conversationally out "
+                    "loud - greet him by name, lead with the date and weather, then "
+                    "today's classes and anything due soon, then important email and "
+                    "tasks. Keep it under about 8 sentences and skip anything that's "
+                    "empty or unavailable.",
     "parameters": {"type": "object", "properties": {}, "required": []}})
 def daily_briefing():
     now = datetime.now()
     mark_briefed()
-    return "\n\n".join([
+    sections = [
         f"DATE/TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')} (Clayton, Melbourne)",
-        f"WEATHER SEARCH RESULTS:\n{_weather()}",
+        f"WEATHER:\n{_weather()}",
+        f"UNIVERSITY CALENDAR (next 7 days):\n{_calendar()}",
         f"INBOX:\n{_inbox()}",
         f"TO-DO LIST:\n{_todos()}",
-        f"UNIVERSITY CALENDAR (next 7 days):\n{_calendar()}",
-    ])
+    ]
+    yt = _youtube()
+    if yt.strip():
+        sections.append(f"NEW YOUTUBE UPLOADS (last 24h):\n{yt}")
+    return "\n\n".join(sections)
