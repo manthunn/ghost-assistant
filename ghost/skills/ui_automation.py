@@ -1,3 +1,4 @@
+import time
 import win32clipboard
 from pywinauto import Desktop
 from . import register
@@ -22,6 +23,20 @@ DANGEROUS_UI = [
 
 def _desktop():
     return Desktop(backend="uia")
+
+def _activate(win, settle=1.5):
+    """Focus a window before reading it.
+
+    WebView2/Electron apps (new Outlook, Teams, Discord, Spotify) only populate
+    their UIA accessibility tree once focused - without this they look empty,
+    exposing nothing but window chrome.
+    """
+    try:
+        win.set_focus()
+        time.sleep(settle)
+    except Exception:
+        pass  # some windows refuse focus; reading may still partly work
+    return win
 
 def _find_window(title):
     query = title.lower().strip()
@@ -56,6 +71,7 @@ def list_controls(window_title: str):
     win = _find_window(window_title)
     if not win:
         return f"No open window matching '{window_title}'."
+    _activate(win)
     wanted = {"Button", "CheckBox", "RadioButton", "Edit", "ComboBox",
               "TabItem", "MenuItem", "ListItem"}
     seen, out = set(), []
@@ -169,6 +185,7 @@ def read_window_text(window_title: str):
     win = _find_window(window_title)
     if not win:
         return f"No open window matching '{window_title}'."
+    _activate(win)
     chunks, seen = [], set()
     try:
         for c in win.descendants():
