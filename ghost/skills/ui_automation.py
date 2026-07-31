@@ -79,8 +79,10 @@ def list_controls(window_title: str):
     if not win:
         return f"No open window matching '{window_title}'."
     _activate(win)
+    # Hyperlink matters most on web pages - a typical site is mostly links, and
+    # leaving it out made every page look like it had nothing to click.
     wanted = {"Button", "CheckBox", "RadioButton", "Edit", "ComboBox",
-              "TabItem", "MenuItem", "ListItem"}
+              "TabItem", "MenuItem", "ListItem", "Hyperlink", "TreeItem"}
     seen, out = set(), []
     try:
         for c in win.descendants():
@@ -115,21 +117,44 @@ def click_control(window_title: str, control_name: str):
     if not win:
         return f"No open window matching '{window_title}'."
     query = control_name.lower().strip()
-    clickable = {"Button", "CheckBox", "RadioButton", "TabItem", "MenuItem", "ListItem"}
-    target = None
+    clickable = {"Button", "CheckBox", "RadioButton", "TabItem", "MenuItem",
+                 "ListItem", "Hyperlink", "TreeItem", "ComboBox"}
+
+    def _visible(c):
+        try:
+            if not c.is_visible():
+                return False
+            r = c.rectangle()
+            # Off-screen accessibility helpers ("skip to content" links) sit at
+            # large negative coordinates; clicking those fires at a junk position.
+            return r.right > 0 and r.bottom > 0 and r.width() > 0 and r.height() > 0
+        except Exception:
+            return False
+
+    hits = []
     try:
         for c in win.descendants():
             if c.element_info.control_type not in clickable:
                 continue
             name = (c.window_text() or "").strip()
             if name and query in name.lower():
-                target = c
-                if name.lower() == query:
-                    break
+                hits.append((c, name))
     except Exception as e:
         return f"Couldn't search controls: {e}"
-    if target is None:
+    if not hits:
         return f"No clickable control named '{control_name}' found in '{win.window_text()}'."
+
+    # Visible always beats invisible, then exact name over partial. Matching an
+    # exact-but-hidden element (a collapsed menu item, or a link below the fold)
+    # and clicking its stale coordinates is how this silently did nothing.
+    visible_hits = [(c, n) for c, n in hits if _visible(c)]
+    if not visible_hits:
+        names = ", ".join(sorted({n for _c, n in hits})[:4])
+        return (f"Found '{control_name}' in '{win.window_text()}' but it isn't "
+                f"visible on screen right now (matched: {names}). It may be below "
+                "the fold or inside a menu that needs opening first.")
+    target, _ = next(((c, n) for c, n in visible_hits if n.lower() == query),
+                     visible_hits[0])
 
     label = target.window_text()
     if any(word in label.lower() for word in DANGEROUS_UI):
@@ -182,6 +207,45 @@ def type_into_control(window_title: str, control_name: str, text: str):
         return f"Typed into '{control_name}'."
     except Exception as e:
         return f"Found the field but couldn't type into it: {e}"
+
+@register({"name": "scroll_window",
+    "description": "Scroll a window or web page. Use when something the user asked "
+                    "for isn't visible yet - click_control reports when a target is "
+                    "below the fold, and scrolling then brings it into view.",
+    "parameters": {"type": "object", "properties": {
+        "window_title": {"type": "string"},
+        "direction": {"type": "string",
+                       "description": "down, up, top or bottom. Default down."},
+        "amount": {"type": "integer",
+                    "description": "how many pages to scroll, default 1"}},
+        "required": ["window_title"]}})
+def scroll_window(window_title: str, direction: str = "down", amount: int = 1):
+    win = _find_window(window_title)
+    if not win:
+        return f"No open window matching '{window_title}'."
+    _activate(win, settle=0.4)
+    d = (direction or "down").lower().strip()
+    if d not in ("down", "up", "top", "bottom"):
+        return f"Direction must be down, up, top or bottom - not '{direction}'."
+    # Mouse wheel over the page body, NOT PageDown/End. type_keys goes to whatever
+    # holds keyboard focus, so with the cursor in the address bar those keys
+    # navigate or edit text instead of scrolling - that actually changed pages
+    # mid-test rather than scrolling them.
+    from pywinauto import mouse
+    try:
+        r = win.rectangle()
+        cx, cy = (r.left + r.right) // 2, (r.top + r.bottom) // 2
+        steps = {"top": 25, "bottom": 25}.get(d, max(1, min(int(amount or 1), 15)))
+        sign = 1 if d in ("up", "top") else -1
+        for _ in range(steps):
+            mouse.scroll(coords=(cx, cy), wheel_dist=sign * 5)
+            time.sleep(0.12)
+        time.sleep(0.6)   # let the page settle before anything reads it
+    except Exception as e:
+        return f"Couldn't scroll that window: {e}"
+    if d in ("top", "bottom"):
+        return f"Scrolled to the {d} of the page."
+    return f"Scrolled {d} {steps} step(s)."
 
 @register({"name": "read_window_text",
     "description": "Read the visible text content of a specific open window, e.g. to "
