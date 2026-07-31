@@ -10,9 +10,16 @@ HOME = pathlib.Path.home()
 FOLDERS = {"desktop": HOME / "Desktop", "downloads": HOME / "Downloads",
            "documents": HOME / "OneDrive" / "Documents"}
 # Friendly shortcuts for common built-in commands that don't need file resolution.
+# "outlook" on PATH resolves to CLASSIC Outlook (Office16), which has no mail
+# account configured here - the real mailbox lives in new Outlook, a Store app
+# that has to be launched by its AppUserModelID rather than an exe path.
+NEW_OUTLOOK = ("shell:AppsFolder\\Microsoft.OutlookForWindows_8wekyb3d8bbwe"
+               "!Microsoft.OutlookforWindows")
 ALIASES = {"notepad": "notepad", "calculator": "calc", "chrome": "chrome",
            "spotify": "spotify", "vs code": "code", "vscode": "code",
-           "edge": "msedge", "explorer": "explorer", "settings": "ms-settings:"}
+           "edge": "msedge", "explorer": "explorer", "settings": "ms-settings:",
+           "outlook": NEW_OUTLOOK, "mail": NEW_OUTLOOK, "email": NEW_OUTLOOK,
+           "outlook classic": "outlook"}
 # Matched as regex against the actual command shape, not bare substrings -
 # a naive substring check on "format" used to false-positive on any command
 # containing the word "format" at all, e.g. a URL query string "?format=json".

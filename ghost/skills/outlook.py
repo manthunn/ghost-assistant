@@ -38,13 +38,42 @@ def _window_titles():
         pass
     return out
 
-def _outlook_window():
-    win = _find_window("Outlook")
-    return _activate(win) if win else None
+def _outlook_window(launch_if_missing=True, wait_secs=25):
+    """Find the Outlook window, starting Outlook if it isn't running.
 
-def _list_items(win):
-    return [c for c in win.descendants()
-            if c.element_info.control_type == "ListItem"]
+    Note this must reach NEW Outlook (olk.exe). "outlook" on PATH resolves to
+    classic Outlook, which has no account configured here - open_app's alias
+    handles that.
+    """
+    win = _find_window("Outlook")
+    if win:
+        return _activate(win)
+    if not launch_if_missing:
+        return None
+    from .system_control import open_app
+    open_app("outlook")
+    deadline = time.time() + wait_secs
+    while time.time() < deadline:
+        time.sleep(2)
+        win = _find_window("Outlook")
+        if win:
+            return _activate(win)
+    return None
+
+def _list_items(win, wait_secs=18):
+    """Message rows, waiting for them to render.
+
+    A freshly-launched Outlook reports its window immediately but takes several
+    seconds to populate the message list, so reading straight away returns
+    nothing and looks like a failure. Poll instead of giving up on the first try.
+    """
+    deadline = time.time() + wait_secs
+    while True:
+        items = [c for c in win.descendants()
+                 if c.element_info.control_type == "ListItem"]
+        if items or time.time() >= deadline:
+            return items
+        time.sleep(1.5)
 
 def _reading_pane(win):
     """The Document holding the open email - i.e. the one with no ListItems in it
