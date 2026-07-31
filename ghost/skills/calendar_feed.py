@@ -27,6 +27,9 @@ FEEDS = {
 _cache = {}
 CACHE_TTL = timedelta(minutes=15)
 
+class FeedRevoked(Exception):
+    """The secret address no longer works - almost always because it was Reset."""
+
 def _fetch(env_key):
     url = os.getenv(env_key)
     if not url:
@@ -35,6 +38,14 @@ def _fetch(env_key):
     if hit and datetime.now() - hit[0] < CACHE_TTL:
         return hit[1]
     r = requests.get(url, timeout=20)
+    if r.status_code == 404:
+        # Google returns 404 for a secret iCal URL whose token has been reset.
+        # Say so plainly - "404 Client Error" is useless read out loud.
+        raise FeedRevoked(
+            "this calendar's secret address no longer works. It was most likely "
+            "Reset in Google Calendar, which invalidates the old link. A new one "
+            "needs to be copied from Google Calendar > Settings > that calendar > "
+            "Integrate calendar > Secret address in iCal format.")
     r.raise_for_status()
     _cache[env_key] = (datetime.now(), r.text)
     return r.text
@@ -86,10 +97,14 @@ def collect(days_ahead=7):
     # tz-aware so the window lines up with the feeds' UTC timestamps
     now = datetime.now().astimezone()
     start, end = now - timedelta(hours=12), now + timedelta(days=days_ahead)
-    result, missing = {}, []
+    result, missing, revoked = {}, [], []
     for kind, env_key in FEEDS.items():
         try:
             text = _fetch(env_key)
+        except FeedRevoked as e:
+            revoked.append(kind)
+            result[kind] = [f"UNAVAILABLE - {e}"]
+            continue
         except Exception as e:
             result[kind] = [f"(couldn't fetch {kind}: {e})"]
             continue
@@ -100,11 +115,18 @@ def collect(days_ahead=7):
             result[kind] = [_fmt(e) for e in _events_between(text, start, end)]
         except Exception as e:
             result[kind] = [f"(couldn't parse {kind}: {e})"]
-    return result, missing
+    return result, missing, revoked
 
 def briefing_section(days_ahead=7):
     """Compact text block for the daily briefing."""
-    data, missing = collect(days_ahead)
+    data, missing, revoked = collect(days_ahead)
+    if revoked and len(revoked) == len(data):
+        # Every feed is dead - lead with the one thing that fixes it, rather than
+        # repeating the same error once per calendar.
+        return ("All calendar feeds have stopped working: their secret addresses were "
+                "Reset in Google Calendar, which invalidates the old links. Tell the "
+                "user plainly that his calendar links need replacing, and don't guess "
+                "at any classes or deadlines.")
     if not data and missing:
         return ("No calendar feeds configured - tell the user you can include his "
                 "timetable and deadlines once he adds a calendar feed, and don't guess.")
