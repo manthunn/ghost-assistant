@@ -75,6 +75,93 @@ def _list_items(win, wait_secs=18):
             return items
         time.sleep(1.5)
 
+def _accounts(win):
+    """[(email, [(folder_label, element), ...]), ...] read off the folder tree.
+
+    Account rows are TreeItems whose text is a bare address; every folder row
+    after one belongs to it until the next account or the 'Add account' row.
+    """
+    out, current = [], None
+    for c in win.descendants():
+        if c.element_info.control_type != "TreeItem":
+            continue
+        label = _clean(c.window_text())
+        if not label:
+            continue
+        if label.lower().startswith("add account"):
+            break
+        if "@" in label and " " not in label:
+            current = (label, [])
+            out.append(current)
+        elif current is not None:
+            current[1].append((label, c))
+    return out
+
+def _inbox_of(folders):
+    for label, el in folders:
+        if label.lower().startswith("inbox"):
+            return label, el
+    return None, None
+
+def _unread_count(label):
+    m = re.search(r"(\d+)\s+unread", label or "")
+    return int(m.group(1)) if m else 0
+
+@register({"name": "check_mail",
+    "description": "Report unread email counts across all of the user's Outlook "
+                    "accounts (personal and university). Fast - reads the folder "
+                    "list without opening any message. Use for 'any new mail?', "
+                    "'do I have unread emails', or as part of a morning briefing.",
+    "parameters": {"type": "object", "properties": {}, "required": []}})
+def check_mail():
+    win = _outlook_window()
+    if not win:
+        return "Couldn't open Outlook to check mail."
+    accounts = _accounts(win)
+    if not accounts:
+        return "Outlook is open but its account list couldn't be read."
+    lines, total = [], 0
+    for email, folders in accounts:
+        label, _el = _inbox_of(folders)
+        if label is None:
+            lines.append(f"{email}: no inbox found")
+            continue
+        n = _unread_count(label)
+        total += n
+        lines.append(f"{email}: {n} unread" if n else f"{email}: nothing new")
+    head = f"{total} unread across {len(accounts)} account(s)."
+    return head + "\n" + "\n".join(f"- {l}" for l in lines)
+
+_ACCOUNT_HINTS = {
+    "monash": ("monash", "student"), "university": ("monash", "student"),
+    "uni": ("monash", "student"), "student": ("monash", "student"),
+    "school": ("monash", "student"),
+    "personal": ("outlook.com", "hotmail", "live."),
+    "private": ("outlook.com", "hotmail", "live."),
+}
+
+def _switch_account(win, account):
+    """Click the named account's Inbox. True on success, else a message to relay."""
+    accounts = _accounts(win)
+    if not accounts:
+        return "Outlook is open but its account list couldn't be read."
+    q = _clean(account).lower()
+    needles = _ACCOUNT_HINTS.get(q, (q,))
+    match = next((a for a in accounts
+                  if any(n in a[0].lower() for n in needles)), None)
+    if match is None:
+        have = ", ".join(a[0] for a in accounts)
+        return f"No Outlook account matching '{account}'. Accounts available: {have}."
+    label, el = _inbox_of(match[1])
+    if el is None:
+        return f"Couldn't find an Inbox under {match[0]}."
+    try:
+        el.click_input()
+        time.sleep(2.5)   # let the message list repopulate for the new account
+    except Exception as e:
+        return f"Couldn't switch to {match[0]}: {e}"
+    return True
+
 def _reading_pane(win):
     """The Document holding the open email - i.e. the one with no ListItems in it
     (the other Document is the whole app shell, message list included)."""
@@ -99,16 +186,26 @@ def _text_of(element, limit=4000):
     return " | ".join(chunks)[:limit]
 
 @register({"name": "read_inbox",
-    "description": "List the most recent emails in the user's Outlook inbox "
-                    "(sender, subject, preview, time). Outlook must be open. Use "
-                    "this to answer 'any new email?' or before read_email.",
+    "description": "List the most recent emails in an Outlook inbox (sender, "
+                    "subject, preview, time). The user has two accounts - a personal "
+                    "one and his Monash university one - so pass 'account' to pick, "
+                    "e.g. 'monash', 'student', or 'personal'. Opens Outlook if it "
+                    "isn't running. Use check_mail first for a quick unread count.",
     "parameters": {"type": "object", "properties": {
-        "count": {"type": "integer", "description": "how many recent emails, default 5"}},
+        "count": {"type": "integer", "description": "how many recent emails, default 5"},
+        "account": {"type": "string",
+                     "description": "which mailbox: part of the address, or "
+                                    "'monash'/'university'/'personal'. Omit for the "
+                                    "one currently open."}},
         "required": []}})
-def read_inbox(count: int = 5):
+def read_inbox(count: int = 5, account: str = ""):
     win = _outlook_window()
     if not win:
-        return "Outlook doesn't appear to be open - open it with open_app first."
+        return "Couldn't open Outlook to read the inbox."
+    if account.strip():
+        switched = _switch_account(win, account)
+        if switched is not True:
+            return switched          # an explanatory message
     items = _list_items(win)
     if not items:
         return "Outlook is open but the message list couldn't be read."

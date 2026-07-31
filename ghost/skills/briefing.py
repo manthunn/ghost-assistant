@@ -67,11 +67,24 @@ def _weather():
             return f"(couldn't fetch weather: {e})"
 
 def _inbox():
+    """Unread counts for every account, plus headlines from the open one.
+
+    check_mail reads the folder tree, so it covers both the personal and Monash
+    mailboxes without clicking between them; read_inbox then gives actual subject
+    lines for whichever is currently shown.
+    """
+    parts = []
+    try:
+        from .outlook import check_mail
+        parts.append(check_mail())
+    except Exception as e:
+        parts.append(f"(couldn't check unread counts: {e})")
     try:
         from .outlook import read_inbox
-        return read_inbox(5)
+        parts.append("Most recent:\n" + read_inbox(5))
     except Exception as e:
-        return f"(couldn't read inbox: {e})"
+        parts.append(f"(couldn't read recent mail: {e})")
+    return "\n\n".join(parts)
 
 def _calendar():
     try:
