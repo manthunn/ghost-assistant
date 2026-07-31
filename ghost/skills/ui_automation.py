@@ -1,9 +1,15 @@
 import time
-import win32clipboard
-from pywinauto import Desktop
 from . import register
 
+# pywinauto and win32clipboard are imported lazily, inside the functions that need
+# them, NOT at module level. Importing pywinauto calls CoInitialize (COM apartment
+# setup); skills load on a background thread while pywebview is initialising
+# WebView2's COM on the main thread, and the two deadlock - Ghost hung forever
+# during startup with no window and no error. Deferring the import to first actual
+# use means startup never touches COM from the wrong thread.
+
 def _set_clipboard(text):
+    import win32clipboard
     win32clipboard.OpenClipboard()
     try:
         win32clipboard.EmptyClipboard()
@@ -22,6 +28,7 @@ DANGEROUS_UI = [
 ]
 
 def _desktop():
+    from pywinauto import Desktop   # lazy: see note at top of file
     return Desktop(backend="uia")
 
 def _activate(win, settle=1.5):
