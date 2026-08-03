@@ -20,7 +20,10 @@ import pathlib
 import subprocess
 import keyboard
 
-HOTKEY = "f12"
+# F12 alone is unreliable: browsers claim it for DevTools and VS Code for
+# Go-to-Definition, so the focused app swallows it before the global hook sees
+# it. Ctrl+Alt+G is the dependable one; F12 stays for when nothing has grabbed it.
+HOTKEYS = ["ctrl+alt+g", "ctrl+shift+f12", "f12"]
 ROOT = pathlib.Path(__file__).resolve().parent
 MAIN = ROOT / "main.py"
 LOG = ROOT / "hotkey.log"
@@ -61,12 +64,17 @@ def main():
     if not MAIN.exists():
         log(f"Can't find {MAIN} - run this from the ghost-assistant folder.")
         return
-    try:
-        keyboard.add_hotkey(HOTKEY, launch)
-    except Exception as e:
-        log(f"couldn't register {HOTKEY.upper()}: {e}")
+    armed = []
+    for hk in HOTKEYS:
+        try:
+            keyboard.add_hotkey(hk, launch)
+            armed.append(hk)
+        except Exception as e:
+            log(f"couldn't register {hk}: {e}")
+    if not armed:
+        log("no hotkeys could be registered - giving up")
         return
-    log(f"listener armed - press {HOTKEY.upper()} to bring Ghost online")
+    log("listener armed - " + " or ".join(h.upper() for h in armed))
     try:
         keyboard.wait()
     except KeyboardInterrupt:
