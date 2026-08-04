@@ -2,6 +2,7 @@ import asyncio
 import threading
 import queue
 import time
+import numpy as np
 import sounddevice as sd
 from google.genai import types
 from .brain import client, system_with_time
@@ -26,6 +27,7 @@ class AudioPlayer:
     """Streams PCM16 chunks out as they arrive, so playback stays gapless."""
     def __init__(self, rate=OUT_RATE):
         self.buf = bytearray()
+        self.level = 0.0   # loudness of what's playing right now, 0..1, for the UI
         self.lock = threading.Lock()
         self.stream = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16",
                                           blocksize=1200, callback=self._callback)
@@ -36,9 +38,19 @@ class AudioPlayer:
         with self.lock:
             chunk = bytes(self.buf[:needed])
             del self.buf[:len(chunk)]
-        if len(chunk) < needed:
-            chunk += b"\x00" * (needed - len(chunk))
+        real = len(chunk)
+        if real < needed:
+            chunk += b"\x00" * (needed - real)
         outdata[:] = chunk
+        # Loudness for the particle sphere. Measured here because this is the
+        # only place the actual played samples exist. A numpy RMS over ~1200
+        # samples is trivial, so the audio callback stays cheap - anything
+        # heavier here would glitch playback.
+        if real:
+            s = np.frombuffer(chunk[:real], dtype=np.int16).astype(np.float32)
+            self.level = min(1.0, float(np.sqrt(np.mean(s * s))) / 8000.0)
+        else:
+            self.level = 0.0
 
     def feed(self, pcm_bytes):
         with self.lock:
@@ -140,6 +152,21 @@ async def _receive_loop(session, ui, player, stop_event, activity):
                     return
                 ui.set("🟢 Listening")
 
+def _level_pump(ui, player, stop_event):
+    """Feed Ghost's speaking loudness to the UI ~25 times a second.
+
+    A plain thread rather than an asyncio task: evaluate_js is a blocking IPC
+    hop into the webview, and running it on the event loop would compete with
+    audio streaming. 25Hz is enough because the scene smooths between values.
+    """
+    while not stop_event.is_set():
+        try:
+            ui.set_level(player.level if player.is_active() else 0.0)
+        except Exception:
+            pass
+        stop_event.wait(0.04)
+
+
 async def run(ui, stop_event):
     gemini_tools = [types.Tool(function_declarations=[t["function"] for t in TOOLS])]
     config = types.LiveConnectConfig(
@@ -176,6 +203,8 @@ async def run(ui, stop_event):
 
     async with client.aio.live.connect(model=MODEL, config=config) as session:
         mic_stream.start()
+        threading.Thread(target=_level_pump, args=(ui, player, stop_event),
+                         daemon=True).start()
         ui.set("🟢 Listening")
         # Run mic, receive and idle-watchdog concurrently: the receive loop blocks
         # awaiting server messages, so the watchdog needs to be its own task to be

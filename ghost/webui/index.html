@@ -4,21 +4,43 @@
 <meta charset="utf-8">
 <title>Ghost</title>
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; height: 100%; }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #04060d; height: 100%; }
   #scene { position: fixed; inset: 0; }
   #hud {
-    position: fixed; left: 40px; bottom: 40px; z-index: 10;
-    font-family: 'Segoe UI', sans-serif; color: #f0f0f5; user-select: none;
-    -webkit-app-region: drag;
+    position: fixed; left: 38px; bottom: 34px; z-index: 10;
+    font-family: 'Consolas', 'SF Mono', monospace; color: #dfe6f5;
+    user-select: none; -webkit-app-region: drag;
   }
-  #hud .state { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
-  #hud .dot { width: 12px; height: 12px; border-radius: 50%; background: #3ecf6a;
-              box-shadow: 0 0 12px currentColor; transition: background 0.4s; }
-  #hud .detail { font-size: 13px; color: #8a8a99; margin-top: 4px; margin-left: 22px; }
+  #hud .state {
+    font-size: 13px; letter-spacing: 0.34em; text-transform: uppercase;
+    display: flex; align-items: center; gap: 12px; opacity: 0.92;
+  }
+  #hud .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: #3ecf6a;
+    box-shadow: 0 0 14px 2px currentColor; color: #3ecf6a;
+    transition: background .5s, color .5s;
+  }
+  #hud .detail {
+    font-size: 11px; letter-spacing: 0.16em; color: #5d6478;
+    margin-top: 9px; margin-left: 19px; min-height: 13px;
+  }
+  /* Thin scanline wash - reads as a display rather than a web page. */
+  #grain {
+    position: fixed; inset: 0; z-index: 5; pointer-events: none; opacity: .5;
+    background: repeating-linear-gradient(
+      to bottom, rgba(255,255,255,.018) 0 1px, transparent 1px 3px);
+  }
+  #vignette {
+    position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    background: radial-gradient(ellipse at center,
+      rgba(0,0,0,0) 42%, rgba(2,4,10,.82) 100%);
+  }
 </style>
 </head>
 <body>
 <div id="scene"></div>
+<div id="vignette"></div>
+<div id="grain"></div>
 <div id="hud">
   <div class="state"><span class="dot" id="dot"></span><span id="word">Booting</span></div>
   <div class="detail" id="detail"></div>
@@ -26,134 +48,231 @@
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
+// ---------------------------------------------------------------------------
+// Ghost's face. One GPU particle sphere that reacts to the pointer and to
+// Ghost's actual speaking voice.
+//
+// Everything that moves is computed in the vertex shader. The old scene moved
+// meshes from JavaScript, which is why it never felt smooth - 60k points cannot
+// be repositioned per frame on the CPU. Here the CPU only updates a handful of
+// uniforms and the GPU does the rest.
+//
+// Two inputs arrive from Python (see ui3d.py):
+//   window.updateGhostState(word, detail)  - state name, drives colour
+//   window.ghostLevel(v)                   - 0..1 speaking loudness, ~25Hz
+// ---------------------------------------------------------------------------
+
 const COLORS = {
-  Listening: 0x3ecf6a, Thinking: 0xf5b83d, Working: 0x4a9eff,
-  Speaking: 0xb78cff, Offline: 0x5a5a66, Booting: 0x5a5a66,
+  Listening: [0.24, 0.81, 0.42],
+  Thinking:  [0.96, 0.72, 0.24],
+  Working:   [0.29, 0.62, 1.00],
+  Speaking:  [0.72, 0.55, 1.00],
+  Offline:   [0.35, 0.37, 0.42],
+  Booting:   [0.35, 0.37, 0.42],
 };
-const SKILLS = ["open_app", "web_search", "remember", "recall", "run_command",
-  "click_control", "read_window_text", "delegate_task", "media_control"];
+
+// Density is a look decision, not a performance one. Past ~30k the points
+// overlap into a continuous shell and you lose the individual particles that
+// make this read as a point cloud rather than a sphere.
+const COUNT = 22000;
+const RADIUS = 13.0;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
-camera.position.set(0, 0, 60);
+const camera = new THREE.PerspectiveCamera(
+  52, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 0, 42);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+// Cap the pixel ratio: at 60k additive points a 2x retina buffer is pure
+// overdraw and costs far more than it shows.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
 document.getElementById("scene").appendChild(renderer.domElement);
 
-// Starfield
-const starGeo = new THREE.BufferGeometry();
-const STAR_COUNT = 4000;
-const starPos = new Float32Array(STAR_COUNT * 3);
-for (let i = 0; i < STAR_COUNT; i++) {
-  const r = 200 + Math.random() * 600;
-  const theta = Math.random() * Math.PI * 2;
-  const phi = Math.acos(2 * Math.random() - 1);
-  starPos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
-  starPos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
-  starPos[i*3+2] = r * Math.cos(phi);
+// --- geometry: an evenly covered sphere -------------------------------------
+// Fibonacci spiral rather than random spherical coordinates, which clump hard
+// at the poles and look blotchy at this density.
+const geo = new THREE.BufferGeometry();
+const pos = new Float32Array(COUNT * 3);
+const rnd = new Float32Array(COUNT);       // per-particle phase, kills uniformity
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+for (let i = 0; i < COUNT; i++) {
+  const y = 1 - (i / (COUNT - 1)) * 2;
+  const r = Math.sqrt(Math.max(0, 1 - y * y));
+  const th = GOLDEN * i;
+  pos[i*3]   = Math.cos(th) * r;
+  pos[i*3+1] = y;
+  pos[i*3+2] = Math.sin(th) * r;
+  rnd[i] = Math.random();
 }
-starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+geo.setAttribute("aRand", new THREE.BufferAttribute(rnd, 1));
 
-// Soft round sprite for all particles instead of Three.js's default square points
-function makeDotTexture() {
-  const c = document.createElement("canvas");
-  c.width = c.height = 64;
-  const ctx = c.getContext("2d");
-  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.4, "rgba(255,255,255,0.6)");
-  g.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(c);
-}
-const dotTexture = makeDotTexture();
-
-const starMat = new THREE.PointsMaterial({
-  color: 0xaaaaee, size: 1.6, map: dotTexture, transparent: true, opacity: 0.8,
-  depthWrite: false, blending: THREE.AdditiveBlending,
-});
-const stars = new THREE.Points(starGeo, starMat);
-scene.add(stars);
-
-// Nebula dust ring
-const dustGeo = new THREE.BufferGeometry();
-const DUST_COUNT = 1500;
-const dustPos = new Float32Array(DUST_COUNT * 3);
-for (let i = 0; i < DUST_COUNT; i++) {
-  const r = 18 + Math.random() * 22;
-  const theta = Math.random() * Math.PI * 2;
-  const y = (Math.random() - 0.5) * 8;
-  dustPos[i*3]   = r * Math.cos(theta);
-  dustPos[i*3+1] = y;
-  dustPos[i*3+2] = r * Math.sin(theta);
-}
-dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
-const dustMat = new THREE.PointsMaterial({
-  color: 0xb78cff, size: 1.1, map: dotTexture, transparent: true, opacity: 0.5,
-  depthWrite: false, blending: THREE.AdditiveBlending,
-});
-const dust = new THREE.Points(dustGeo, dustMat);
-scene.add(dust);
-
-// Core orb
-const coreGeo = new THREE.IcosahedronGeometry(6, 3);
-const coreMat = new THREE.MeshBasicMaterial({ color: COLORS.Booting, wireframe: true, transparent: true, opacity: 0.9 });
-const core = new THREE.Mesh(coreGeo, coreMat);
-scene.add(core);
-
-const glowGeo = new THREE.IcosahedronGeometry(6.4, 2);
-const glowMat = new THREE.MeshBasicMaterial({ color: COLORS.Booting, transparent: true, opacity: 0.08 });
-const glow = new THREE.Mesh(glowGeo, glowMat);
-scene.add(glow);
-
-// Orbiting skill nodes
-const orbitGroup = new THREE.Group();
-scene.add(orbitGroup);
-const nodeMeshes = [];
-const nodeMats = [];
-SKILLS.forEach((name, i) => {
-  const angle = (i / SKILLS.length) * Math.PI * 2;
-  const radius = 26;
-  const nodeGeo = new THREE.SphereGeometry(0.6, 12, 12);
-  const nodeMat = new THREE.MeshBasicMaterial({ color: COLORS.Booting, transparent: true, opacity: 0.75 });
-  const node = new THREE.Mesh(nodeGeo, nodeMat);
-  node.position.set(Math.cos(angle) * radius, Math.sin(angle * 1.7) * 6, Math.sin(angle) * radius);
-  orbitGroup.add(node);
-  nodeMeshes.push(node);
-  nodeMats.push(nodeMat);
-
-  const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), node.position]);
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x3a3a45, transparent: true, opacity: 0.35 });
-  orbitGroup.add(new THREE.Line(lineGeo, lineMat));
-});
-
-let currentColor = COLORS.Booting;
-window.updateGhostState = function(word, detail) {
-  const color = COLORS[word] !== undefined ? COLORS[word] : COLORS.Booting;
-  currentColor = color;
-  coreMat.color.setHex(color);
-  glowMat.color.setHex(color);
-  nodeMats.forEach(m => m.color.setHex(color));
-  document.getElementById("word").textContent = word;
-  document.getElementById("detail").textContent = detail || "";
-  document.getElementById("dot").style.background = "#" + color.toString(16).padStart(6, "0");
+const uniforms = {
+  uTime:    { value: 0 },
+  uRadius:  { value: RADIUS },
+  uLevel:   { value: 0 },                       // speaking loudness 0..1
+  uPointer: { value: new THREE.Vector3(999, 0, 0) },
+  uPush:    { value: 0 },                       // pointer influence 0..1
+  uColor:   { value: new THREE.Vector3(...COLORS.Booting) },
+  uSize:    { value: Math.min(window.devicePixelRatio, 1.75) * 0.85 },
 };
 
-let t = 0;
+const vert = `
+uniform float uTime, uRadius, uLevel, uPush, uSize;
+uniform vec3 uPointer;
+attribute float aRand;
+varying float vGlow;
+
+// Cheap value noise. A full simplex implementation is overkill here - these
+// particles only need to breathe, not look like terrain.
+float hash(vec3 p) {
+  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+float noise(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float n = mix(
+    mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+        mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+        mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+  return n * 2.0 - 1.0;
+}
+
+void main() {
+  vec3 dir = normalize(position);
+
+  // Idle: a slow swell so it never looks frozen.
+  float breathe = noise(dir * 1.7 + uTime * 0.11) * 0.30;
+
+  // Voice: a faster, tighter ripple scaled by how loud Ghost currently is.
+  // Driven by real playback amplitude, so the surface tracks the actual words.
+  // Kept moderate on purpose: at higher amplitudes the noise term stops
+  // reading as a sphere pulsing and starts reading as a blob.
+  float voice = noise(dir * 4.2 + uTime * 1.5) * uLevel * 1.35
+              + uLevel * 0.75;
+
+  float r = uRadius + breathe + voice;
+  vec3 p = dir * r;
+
+  // Pointer repulsion - the visible "you are touching it" effect.
+  // Falls off with angular distance so the whole surface shifts subtly while
+  // the area under the cursor blows out, like the reference image.
+  // Tighter falloff and a much smaller push than feels right on paper: the
+  // displacement, the scatter, the point size and the glow all scale with
+  // infl, so they compound and it blows out fast.
+  float d = distance(normalize(uPointer), dir);
+  float infl = smoothstep(0.55, 0.0, d) * uPush;
+  p += dir * infl * 2.4;
+  // Slight lateral scatter so displaced particles spray rather than slide.
+  p += vec3(noise(dir * 9.0 + uTime), noise(dir * 9.0 - uTime),
+            noise(dir * 9.0 + 4.0)) * infl * 0.8;
+
+  vGlow = infl * 0.45 + uLevel * 0.55 + aRand * 0.12;
+
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  // Perspective-correct sizing, plus a nudge for excited particles.
+  gl_PointSize = uSize * (300.0 / -mv.z) * (0.55 + aRand * 0.5 + infl * 0.45);
+}
+`;
+
+const frag = `
+uniform vec3 uColor;
+varying float vGlow;
+void main() {
+  // Round, soft-edged point drawn analytically - no sprite texture to upload,
+  // and it stays crisp at any point size.
+  vec2 c = gl_PointCoord - 0.5;
+  float d = dot(c, c);
+  if (d > 0.25) discard;
+  float a = smoothstep(0.25, 0.0, d);
+  vec3 col = mix(uColor, vec3(1.0), clamp(vGlow * 0.55, 0.0, 0.7));
+  // Deliberately faint. These are additively blended and thousands overlap on
+  // the front face - anything above ~0.1 base alpha accumulates into a solid
+  // white disc and the individual particles disappear.
+  gl_FragColor = vec4(col, a * (0.30 + vGlow * 0.55));
+}
+`;
+
+const mat = new THREE.ShaderMaterial({
+  uniforms, vertexShader: vert, fragmentShader: frag,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const sphere = new THREE.Points(geo, mat);
+scene.add(sphere);
+
+// --- inputs from Python ------------------------------------------------------
+let targetColor = COLORS.Booting.slice();
+window.updateGhostState = function (word, detail) {
+  targetColor = (COLORS[word] || COLORS.Booting).slice();
+  document.getElementById("word").textContent = word;
+  document.getElementById("detail").textContent = detail || "";
+  const hex = "#" + targetColor.map(
+    v => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
+  const dot = document.getElementById("dot");
+  dot.style.background = hex;
+  dot.style.color = hex;
+};
+
+// Called ~25 times a second while Ghost speaks. Smoothed here rather than in
+// Python so the surface never steps between updates.
+let levelTarget = 0;
+window.ghostLevel = function (v) {
+  levelTarget = Math.max(0, Math.min(1, v || 0));
+};
+
+// --- pointer ----------------------------------------------------------------
+// Tracked as a direction on the sphere, so the effect follows the cursor even
+// when it is off the sphere entirely.
+const ndc = new THREE.Vector2(0, 0);
+let pushTarget = 0;
+window.addEventListener("pointermove", (e) => {
+  ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  pushTarget = 1;
+});
+window.addEventListener("pointerleave", () => { pushTarget = 0; });
+
+const ray = new THREE.Raycaster();
+const pointerDir = new THREE.Vector3(0, 0, 1);
+const tmp = new THREE.Vector3();
+
+// --- loop -------------------------------------------------------------------
+const clock = new THREE.Clock();
+let level = 0, push = 0;
+
 function animate() {
   requestAnimationFrame(animate);
-  t += 0.01;
-  stars.rotation.y += 0.0006;
-  dust.rotation.y += 0.0015;
-  orbitGroup.rotation.y += 0.0025;
-  core.rotation.y += 0.004;
-  core.rotation.x += 0.0015;
-  const pulse = 1 + Math.sin(t * 2) * 0.04;
-  core.scale.setScalar(pulse);
-  glow.scale.setScalar(pulse * 1.03);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  uniforms.uTime.value += dt;
+
+  // Asymmetric smoothing: snap up on a syllable, fall away slowly. Equal rates
+  // in both directions read as mushy and lag the voice.
+  const rate = levelTarget > level ? 14 : 4;
+  level += (levelTarget - level) * Math.min(1, dt * rate);
+  uniforms.uLevel.value = level;
+  levelTarget *= 0.92;      // decay if Python stops sending (silence)
+
+  push += (pushTarget - push) * Math.min(1, dt * 6);
+  uniforms.uPush.value = push;
+
+  // Project the cursor onto the sphere's direction space.
+  ray.setFromCamera(ndc, camera);
+  tmp.copy(ray.ray.direction).multiplyScalar(40).add(ray.ray.origin);
+  pointerDir.lerp(tmp.normalize(), Math.min(1, dt * 9));
+  uniforms.uPointer.value.copy(pointerDir);
+
+  // Colour eased rather than snapped, so state changes feel like a mood shift.
+  const c = uniforms.uColor.value;
+  c.x += (targetColor[0] - c.x) * Math.min(1, dt * 2.5);
+  c.y += (targetColor[1] - c.y) * Math.min(1, dt * 2.5);
+  c.z += (targetColor[2] - c.z) * Math.min(1, dt * 2.5);
+
+  sphere.rotation.y += dt * 0.045;
+  sphere.rotation.x = Math.sin(uniforms.uTime.value * 0.13) * 0.14;
+
   renderer.render(scene, camera);
 }
 animate();

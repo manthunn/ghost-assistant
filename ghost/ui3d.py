@@ -49,5 +49,19 @@ class GhostUI:
         if ready:
             self._push(state, detail)
 
+    def set_level(self, level):
+        """Push Ghost's current speaking loudness (0..1) to the particle sphere.
+
+        Called at a fixed low rate rather than per audio chunk: evaluate_js is a
+        synchronous IPC hop, and doing one per 50ms audio callback would stall
+        the playback thread. The scene smooths between values.
+        """
+        if not self._ready:
+            return
+        try:
+            self.window.evaluate_js(f"window.ghostLevel({level:.3f})")
+        except Exception:
+            pass  # window not up yet or already closed
+
     def run(self):
         webview.start()
