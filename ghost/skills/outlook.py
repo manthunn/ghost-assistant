@@ -7,11 +7,17 @@ the open email's body as a Document that contains no ListItems. That's enough to
 read mail without any Azure app registration or OAuth setup.
 
 Read-only by design - sending mail is a separate, confirmation-gated concern.
+
+Outlook is left exactly as it was found: if Ghost had to launch it to read
+something, Ghost closes it again. If it was already open it is left alone -
+closing a window the user was working in would be worse than leaving one open.
 """
 import os
 import re
 import time
+import subprocess
 import urllib.parse
+from contextlib import contextmanager
 from . import register
 from .ui_automation import _find_window, _activate
 
@@ -38,18 +44,13 @@ def _window_titles():
         pass
     return out
 
-def _outlook_window(launch_if_missing=True, wait_secs=25):
-    """Find the Outlook window, starting Outlook if it isn't running.
+def _launch_outlook(wait_secs=25):
+    """Start Outlook and wait for its window. Returns the window, or None.
 
     Note this must reach NEW Outlook (olk.exe). "outlook" on PATH resolves to
     classic Outlook, which has no account configured here - open_app's alias
     handles that.
     """
-    win = _find_window("Outlook")
-    if win:
-        return _activate(win)
-    if not launch_if_missing:
-        return None
     from .system_control import open_app
     open_app("outlook")
     deadline = time.time() + wait_secs
@@ -59,6 +60,66 @@ def _outlook_window(launch_if_missing=True, wait_secs=25):
         if win:
             return _activate(win)
     return None
+
+
+def _close_outlook(win):
+    """Close the Outlook window Ghost opened. True if it actually went away."""
+    try:
+        win.close()
+    except Exception:
+        pass
+    for _ in range(8):
+        time.sleep(0.5)
+        if _find_window("Outlook") is None:
+            return True
+    # WebView2 apps occasionally ignore WM_CLOSE while still starting up. Ask the
+    # process to exit - no /F, so it still shuts down cleanly and any draft gets
+    # its normal save prompt rather than being destroyed.
+    try:
+        subprocess.run(["taskkill", "/IM", "olk.exe"],
+                       capture_output=True, timeout=10)
+    except Exception:
+        return False
+    time.sleep(1.5)
+    return _find_window("Outlook") is None
+
+
+# depth: how many nested outlook_session() blocks are active. launched: whether
+# *Ghost* started Outlook this session (only then may it close it).
+_session = {"depth": 0, "launched": False, "win": None}
+
+
+@contextmanager
+def outlook_session():
+    """Open Outlook if needed, and close it afterwards only if Ghost opened it.
+
+    Reentrant on purpose. The briefing calls check_mail() and read_inbox() back
+    to back; without nesting that would launch Outlook, close it, and launch it
+    again - two ~25 second waits for one briefing section. Only the outermost
+    block closes.
+
+    Yields the window, or None if Outlook couldn't be opened at all.
+    """
+    _session["depth"] += 1
+    try:
+        if _session["win"] is None:
+            existing = _find_window("Outlook")
+            if existing is not None:
+                # Already open - the user may be using it. Leave it open after.
+                _session["win"] = _activate(existing)
+                _session["launched"] = False
+            else:
+                win = _launch_outlook()
+                _session["win"] = win
+                _session["launched"] = win is not None
+        yield _session["win"]
+    finally:
+        _session["depth"] -= 1
+        if _session["depth"] <= 0:
+            win, launched = _session["win"], _session["launched"]
+            _session.update({"depth": 0, "launched": False, "win": None})
+            if launched and win is not None:
+                _close_outlook(win)
 
 def _list_items(win, wait_secs=18):
     """Message rows, waiting for them to render.
@@ -114,23 +175,23 @@ def _unread_count(label):
                     "'do I have unread emails', or as part of a morning briefing.",
     "parameters": {"type": "object", "properties": {}, "required": []}})
 def check_mail():
-    win = _outlook_window()
-    if not win:
-        return "Couldn't open Outlook to check mail."
-    accounts = _accounts(win)
-    if not accounts:
-        return "Outlook is open but its account list couldn't be read."
-    lines, total = [], 0
-    for email, folders in accounts:
-        label, _el = _inbox_of(folders)
-        if label is None:
-            lines.append(f"{email}: no inbox found")
-            continue
-        n = _unread_count(label)
-        total += n
-        lines.append(f"{email}: {n} unread" if n else f"{email}: nothing new")
-    head = f"{total} unread across {len(accounts)} account(s)."
-    return head + "\n" + "\n".join(f"- {l}" for l in lines)
+    with outlook_session() as win:
+        if not win:
+            return "Couldn't open Outlook to check mail."
+        accounts = _accounts(win)
+        if not accounts:
+            return "Outlook is open but its account list couldn't be read."
+        lines, total = [], 0
+        for email, folders in accounts:
+            label, _el = _inbox_of(folders)
+            if label is None:
+                lines.append(f"{email}: no inbox found")
+                continue
+            n = _unread_count(label)
+            total += n
+            lines.append(f"{email}: {n} unread" if n else f"{email}: nothing new")
+        head = f"{total} unread across {len(accounts)} account(s)."
+        return head + "\n" + "\n".join(f"- {l}" for l in lines)
 
 _ACCOUNT_HINTS = {
     "monash": ("monash", "student"), "university": ("monash", "student"),
@@ -199,25 +260,25 @@ def _text_of(element, limit=4000):
                                     "one currently open."}},
         "required": []}})
 def read_inbox(count: int = 5, account: str = ""):
-    win = _outlook_window()
-    if not win:
-        return "Couldn't open Outlook to read the inbox."
-    if account.strip():
-        switched = _switch_account(win, account)
-        if switched is not True:
-            return switched          # an explanatory message
-    items = _list_items(win)
-    if not items:
-        return "Outlook is open but the message list couldn't be read."
-    count = max(1, min(int(count or 5), 15))
-    out = []
-    for c in items[:count]:
-        t = _clean(c.window_text(), 220)
-        if t:
-            out.append(f"- {t}")
-    if not out:
-        return "The message list appears to be empty."
-    return f"{len(out)} most recent inbox messages:\n" + "\n".join(out)
+    with outlook_session() as win:
+        if not win:
+            return "Couldn't open Outlook to read the inbox."
+        if account.strip():
+            switched = _switch_account(win, account)
+            if switched is not True:
+                return switched          # an explanatory message
+        items = _list_items(win)
+        if not items:
+            return "Outlook is open but the message list couldn't be read."
+        count = max(1, min(int(count or 5), 15))
+        out = []
+        for c in items[:count]:
+            t = _clean(c.window_text(), 220)
+            if t:
+                out.append(f"- {t}")
+        if not out:
+            return "The message list appears to be empty."
+        return f"{len(out)} most recent inbox messages:\n" + "\n".join(out)
 
 MAILTO_LIMIT = 1800  # long mailto URLs get truncated by Windows/Outlook
 
@@ -277,28 +338,28 @@ def compose_email(to: str, subject: str, body: str, cc: str = ""):
                    "description": "text from the sender or subject to identify the email"}},
         "required": ["match"]}})
 def read_email(match: str):
-    win = _outlook_window()
-    if not win:
-        return "Outlook doesn't appear to be open - open it with open_app first."
-    query = _clean(match).lower()
-    target = None
-    for c in _list_items(win):
-        if query and query in _clean(c.window_text()).lower():
-            target = c
-            break
-    if target is None:
-        return (f"No email matching '{match}' in the visible inbox. "
-                "Try read_inbox first to see what's there.")
-    header = _clean(target.window_text(), 200)
-    try:
-        target.click_input()
-    except Exception as e:
-        return f"Found the email but couldn't open it: {e}"
-    time.sleep(2)  # let the reading pane load
-    pane = _reading_pane(win)
-    if pane is None:
-        return f"Opened '{header}' but couldn't read the reading pane."
-    body = _text_of(pane)
-    if not body:
-        return f"Opened '{header}' but its body appears empty."
-    return f"Email: {header}\n\nBody:\n{body}"
+    with outlook_session() as win:
+        if not win:
+            return "Couldn't open Outlook to read that email."
+        query = _clean(match).lower()
+        target = None
+        for c in _list_items(win):
+            if query and query in _clean(c.window_text()).lower():
+                target = c
+                break
+        if target is None:
+            return (f"No email matching '{match}' in the visible inbox. "
+                    "Try read_inbox first to see what's there.")
+        header = _clean(target.window_text(), 200)
+        try:
+            target.click_input()
+        except Exception as e:
+            return f"Found the email but couldn't open it: {e}"
+        time.sleep(2)  # let the reading pane load
+        pane = _reading_pane(win)
+        if pane is None:
+            return f"Opened '{header}' but couldn't read the reading pane."
+        body = _text_of(pane)
+        if not body:
+            return f"Opened '{header}' but its body appears empty."
+        return f"Email: {header}\n\nBody:\n{body}"

@@ -104,18 +104,22 @@ def _inbox():
     check_mail reads the folder tree, so it covers both the personal and Monash
     mailboxes without clicking between them; read_inbox then gives actual subject
     lines for whichever is currently shown.
+
+    Both run inside one outlook_session so Outlook is launched once and closed
+    once. Without the shared session each call would open and close it in turn,
+    paying the ~25 second startup wait twice for a single briefing.
     """
+    from .outlook import outlook_session, check_mail, read_inbox
     parts = []
-    try:
-        from .outlook import check_mail
-        parts.append(check_mail())
-    except Exception as e:
-        parts.append(f"(couldn't check unread counts: {e})")
-    try:
-        from .outlook import read_inbox
-        parts.append("Most recent:\n" + read_inbox(5))
-    except Exception as e:
-        parts.append(f"(couldn't read recent mail: {e})")
+    with outlook_session():
+        try:
+            parts.append(check_mail())
+        except Exception as e:
+            parts.append(f"(couldn't check unread counts: {e})")
+        try:
+            parts.append("Most recent:\n" + read_inbox(5))
+        except Exception as e:
+            parts.append(f"(couldn't read recent mail: {e})")
     return "\n\n".join(parts)
 
 def _calendar():
