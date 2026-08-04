@@ -47,7 +47,11 @@ PHRASES = (
 # not loudness alone.
 CLAP_ENABLED = True
 CLAP_FRAME_SECS = 0.008      # 8 ms analysis frames
-CLAP_ABS_MIN = 0.18          # absolute peak floor; claps are genuinely loud
+# Measured on the Razer Seiren V3 Mini: ambient room noise peaks at 0.0005, so
+# the original 0.18 (picked against synthetic claps, not a real mic) was ~360x
+# the noise floor and almost certainly unreachable. 0.08 is still 160x ambient.
+# Run clap_calibrate.py to replace this with a number measured from real claps.
+CLAP_ABS_MIN = 0.08          # absolute peak floor; claps are genuinely loud
 CLAP_RATIO = 6.0             # ...and this much above the running background
 CLAP_DECAY_SECS = 0.09       # must fall back to background within this
 CLAP_REFRACTORY = 0.10       # ignore this long after an onset (echo, decay)
@@ -102,7 +106,10 @@ class ClapDetector:
             # Track background from quiet frames only, so a clap doesn't raise
             # the bar against its own partner.
             if peak < CLAP_ABS_MIN:
-                self.bg = max(0.005, self.bg * CLAP_BG_DECAY + peak * (1 - CLAP_BG_DECAY))
+                # Floor well below a quiet room's 0.0005, or the tracker pins at
+                # the floor and the ratio test stops discriminating anything.
+                self.bg = max(0.0008,
+                              self.bg * CLAP_BG_DECAY + peak * (1 - CLAP_BG_DECAY))
         return hit
 
     def _register(self, t):
