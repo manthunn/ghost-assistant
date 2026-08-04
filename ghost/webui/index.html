@@ -74,7 +74,7 @@ const COLORS = {
 // Density is a look decision, not a performance one. Past ~30k the points
 // overlap into a continuous shell and you lose the individual particles that
 // make this read as a point cloud rather than a sphere.
-const COUNT = 12000;
+const COUNT = 9000;
 const RADIUS = 13.0;
 
 const scene = new THREE.Scene();
@@ -143,8 +143,11 @@ float noise(vec3 p) {
 void main() {
   vec3 dir = normalize(position);
 
-  // Idle: a slow swell so it never looks frozen.
-  float breathe = noise(dir * 1.7 + uTime * 0.11) * 0.30;
+  // Idle: two octaves drifting at different rates, so the resting surface
+  // undulates instead of sitting as a perfect sphere. The second octave is
+  // what stops the first from reading as a single slow wobble.
+  float breathe = noise(dir * 2.4 + uTime * 0.15) * 0.85
+                + noise(dir * 5.2 - uTime * 0.09) * 0.38;
 
   // Voice: a faster, tighter ripple scaled by how loud Ghost currently is.
   // Driven by real playback amplitude, so the surface tracks the actual words.
@@ -163,18 +166,18 @@ void main() {
   // displacement, the scatter, the point size and the glow all scale with
   // infl, so they compound and it blows out fast.
   float d = distance(normalize(uPointer), dir);
-  float infl = smoothstep(0.55, 0.0, d) * uPush;
-  p += dir * infl * 2.4;
+  float infl = smoothstep(0.45, 0.0, d) * uPush;
+  p += dir * infl * 1.1;
   // Slight lateral scatter so displaced particles spray rather than slide.
   p += vec3(noise(dir * 9.0 + uTime), noise(dir * 9.0 - uTime),
-            noise(dir * 9.0 + 4.0)) * infl * 0.8;
+            noise(dir * 9.0 + 4.0)) * infl * 0.35;
 
-  vGlow = infl * 0.45 + uLevel * 0.55 + aRand * 0.12;
+  vGlow = infl * 0.22 + uLevel * 0.55 + aRand * 0.12;
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
   // Perspective-correct sizing, plus a nudge for excited particles.
-  gl_PointSize = uSize * (300.0 / -mv.z) * (0.55 + aRand * 0.5 + infl * 0.45);
+  gl_PointSize = uSize * (300.0 / -mv.z) * (0.55 + aRand * 0.5 + infl * 0.22);
 }
 `;
 
