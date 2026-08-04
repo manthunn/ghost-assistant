@@ -70,8 +70,59 @@ def _safe_walk(win):
     return rows
 
 
+def _reveal_sidebar(win):
+    """Open the sidebar if it's hidden. Returns True if it was opened.
+
+    Use Invoke, not click_input: clicking the reported screen coordinates of an
+    Electron control does nothing at all here (measured), while driving the
+    control directly works - 56 controls became 279.
+    """
+    for ctype, name, el in _safe_walk(win):
+        if ctype != "Button":
+            continue
+        low = name.lower()
+        if low in ("show sidebar", "expand sidebar"):
+            try:
+                el.iface_invoke.Invoke()
+                time.sleep(2.0)
+                return True
+            except Exception:
+                return False
+    return False
+
+
+def _chat_listitems(rows):
+    """ListItems that are actual conversations, by their Pin/Archive siblings.
+
+    The sidebar has more than one view. The Projects page nests chats under
+    "Chats in <project>" lists; the default Recents page is a flat list. Both
+    mark a conversation row the same way, with a 'Pin chat' control inside it,
+    which is what distinguishes it from other list content.
+    """
+    found = []
+    for ctype, name, el in rows:
+        if ctype != "ListItem" or not name:
+            continue
+        try:
+            kids = el.descendants()
+        except Exception:
+            continue
+        marked = False
+        for k in kids:
+            try:
+                if k.element_info.control_type == "Button" and \
+                        _clean(k.window_text()).lower() in ("pin chat", "archive chat"):
+                    marked = True
+                    break
+            except Exception:
+                continue
+        if marked:
+            found.append((name, el))
+    return found
+
+
 def _chatgpt_chats(rows):
-    """({project: [(title, age)]}, [collapsed_project_names])."""
+    """({group: [(title, age)]}, [names_of_scopes_not_readable])."""
     lists = {}
     for ctype, name, el in rows:
         if ctype != "List" or not name.lower().startswith("chats in "):
@@ -93,14 +144,31 @@ def _chatgpt_chats(rows):
                 items.append((title, age))
         lists[project] = items
 
+    # Anything not already claimed by a project list is a Recents entry. The
+    # default sidebar view is Recents, so without this the whole visible chat
+    # list reads as empty whenever the user isn't on the Projects page.
+    claimed = {t for items in lists.values() for t, _a in items}
+    recents = []
+    for name, _el in _chat_listitems(rows):
+        title, age = _split_age(name)
+        if title and title not in claimed:
+            recents.append((title, age))
+    if recents:
+        lists["Recents"] = recents
+
     # Every project row, so a project with no visible List can be reported as
     # collapsed rather than as genuinely empty.
     projects = []
-    for i, (ctype, name, _el) in enumerate(rows):
+    for ctype, name, _el in rows:
         if ctype == "Button" and name.lower().startswith("project actions for "):
             projects.append(name[len("project actions for "):].strip())
-    collapsed = [p for p in projects if p not in lists]
-    return lists, collapsed
+    unreadable = [p for p in projects if p not in lists]
+    # On the Recents view the project list isn't rendered at all, so older
+    # chats filed under a project are simply not visible from here. Say so.
+    if not projects and any(k != "Recents" for k in lists) is False:
+        unreadable.append("any chats filed under Projects (not shown on the "
+                          "Recents view)")
+    return lists, unreadable
 
 
 def _claude_chats(rows):
@@ -134,6 +202,10 @@ def _read_app(app):
                                 f"running. Open it first, then ask again.")
     # Electron/WebView2 apps report empty chrome until focused.
     _activate(win, settle=2.0)
+    # A hidden sidebar means zero conversations are readable - that has to be
+    # fixed before reading, not reported as "you have no chats".
+    if _reveal_sidebar(win):
+        pass
     rows = _safe_walk(win)
     if not rows:
         return title, {}, [], f"Couldn't read the {title} window."
@@ -160,9 +232,9 @@ def _format(title, groups, collapsed, query=""):
     out = [head] + lines
     if collapsed:
         # Never let a collapsed group read as "nothing there".
-        out.append(f"\nNOT SEARCHED - these {title} projects are collapsed, so "
-                   f"their chats aren't readable: {', '.join(collapsed)}. Say so "
-                   f"rather than concluding the user has no such conversation.")
+        out.append(f"\nNOT SEARCHED in {title}: {'; '.join(collapsed)}. Only what "
+                   f"the sidebar currently shows can be read. Mention this rather "
+                   f"than concluding the user has no such conversation.")
     if not hits and q and not collapsed:
         out.append(f"\nNothing matching '{query}' among the visible conversations.")
     return "\n".join(out)
