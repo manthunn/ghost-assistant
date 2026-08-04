@@ -62,13 +62,20 @@
 //   window.ghostLevel(v)                   - 0..1 speaking loudness, ~25Hz
 // ---------------------------------------------------------------------------
 
+// Deliberately a narrow cool family (cyan -> azure -> violet) rather than one
+// hue per state. Spread across the whole wheel, states read as status LEDs;
+// kept close, they read as one thing changing mood. Thinking is the single
+// warm note, so "I'm busy" is unmistakable without a legend.
+// Luminance is held roughly level so no state looks dimmer than another, and
+// saturation stays high because additive blending washes dense areas toward
+// white anyway.
 const COLORS = {
-  Listening: [0.24, 0.81, 0.42],
-  Thinking:  [0.96, 0.72, 0.24],
-  Working:   [0.29, 0.62, 1.00],
-  Speaking:  [0.72, 0.55, 1.00],
-  Offline:   [0.35, 0.37, 0.42],
-  Booting:   [0.35, 0.37, 0.42],
+  Listening: [0.16, 0.87, 0.80],   // #29DECC  teal - calm, receptive
+  Working:   [0.29, 0.61, 1.00],   // #4A9CFF  azure - active
+  Thinking:  [1.00, 0.76, 0.40],   // #FFC266  amber - the one warm note
+  Speaking:  [0.63, 0.51, 1.00],   // #A182FF  violet - voice
+  Offline:   [0.24, 0.27, 0.34],   // #3D4457  slate, well below the rest
+  Booting:   [0.34, 0.39, 0.50],   // #576480  slate, a touch brighter
 };
 
 // Density is a look decision, not a performance one. Past ~30k the points
