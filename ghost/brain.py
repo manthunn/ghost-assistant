@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from .skills import TOOLS, FUNCTIONS
+from .clock import time_context
 
 load_dotenv()
 
@@ -19,9 +20,9 @@ SYSTEM = (
     "it as that instead of taking the literal text at face value. "
     "For live info (weather, sports, news, prices) prefer web_search over "
     "run_command - it's faster and doesn't need confirmation. "
-    "Every user message is prefixed with the current date/time in brackets - use "
-    "it to resolve relative references like 'tonight' or 'this weekend', but "
-    "don't read that prefix back to the user. "
+    "You are always told the current date and time - use it to resolve relative "
+    "references like 'tonight' or 'this weekend', and never read a bracketed "
+    "timestamp back to the user. "
     "The user lives at Deakin Hall, 56 College Way, Clayton, VIC 3168, Australia "
     "(Monash University Clayton Campus, Melbourne), timezone Australia/Melbourne. "
     "Use Clayton/Melbourne for weather, local news, and nearby-place queries without "
@@ -40,6 +41,17 @@ SYSTEM = (
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 _chat = None
+
+
+def system_with_time(dt=None):
+    """SYSTEM plus the real current time.
+
+    The Live API has no per-message hook to prefix a timestamp onto - audio goes
+    straight to the model - so the clock has to be baked into the system
+    instruction when the session opens. Sessions are short-lived (5 min idle
+    timeout), so a session-start timestamp stays accurate in practice.
+    """
+    return SYSTEM + " " + time_context(dt)
 
 def _get_chat():
     global _chat

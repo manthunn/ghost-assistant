@@ -2,14 +2,17 @@
 the first session of the day.
 
 Pulls from the sources Ghost actually has - the clock, live web search for
-weather, the Outlook inbox, and the local to-do list. Class timetable and
-assignment deadlines need a calendar feed (Monash Moodle iCal export or Google
-Calendar); until one is configured those sections say so rather than inventing
-anything.
+weather, the Outlook inbox, the local to-do list, and the Google Calendar API.
+Any section without a working source says so rather than inventing anything.
+
+Nothing here assumes it is morning. The briefing fires on a gap since the last
+one, which can land at any hour, so the time of day is passed through to the
+model and the framing shifts to tomorrow once the evening comes.
 """
 import json
 import pathlib
 from datetime import datetime, timedelta
+from ..clock import part_of_day, stamp, is_winding_down
 from . import register
 
 STATE_FILE = pathlib.Path(__file__).resolve().parent.parent / "briefing_state.json"
@@ -32,6 +35,21 @@ def should_brief():
         return datetime.now() - datetime.fromisoformat(last) >= REBRIEF_AFTER
     except ValueError:
         return True
+
+def briefing_prompt():
+    """The opening request Ghost sends itself for an unprompted briefing.
+
+    Time-aware because this fires on a gap, not on a schedule - it lands in the
+    evening or the small hours as often as at breakfast. The old text was
+    literally "Give me my daily briefing for today", which at 11pm asks for a
+    rundown of a day that has almost finished.
+    """
+    if is_winding_down():
+        return ("Give me my briefing. It is not morning - greet me accordingly, "
+                "and focus on what is coming up next rather than on a day that "
+                "is nearly over.")
+    return "Give me my briefing for today."
+
 
 def mark_briefed():
     STATE_FILE.write_text(
@@ -113,21 +131,29 @@ def _todos():
         return f"(couldn't read to-do list: {e})"
 
 @register({"name": "daily_briefing",
-    "description": "Gather the user's morning briefing: today's date, local weather, "
+    "description": "Gather the user's briefing: current date and time, local weather, "
                     "classes and assignment deadlines, recent inbox messages, "
                     "outstanding to-do items, and new videos from watched YouTube "
                     "channels. Use this when the user asks for their briefing/rundown, "
-                    "or at the start of a new day. Summarise it conversationally out "
-                    "loud - greet him by name, lead with the date and weather, then "
-                    "today's classes and anything due soon, then important email and "
-                    "tasks. Keep it under about 8 sentences and skip anything that's "
-                    "empty or unavailable.",
+                    "or at the start of a session after a long gap. Summarise it "
+                    "conversationally out loud - greet him by name, then lead with "
+                    "what's most useful now, then important email and tasks. "
+                    "IMPORTANT: match the greeting to the DATE/TIME line in the "
+                    "result - it says which part of the day it actually is. Never say "
+                    "'good morning' unless it is genuinely morning, and in the middle "
+                    "of the night skip the greeting and just be brief. In the evening "
+                    "or at night, lead with tomorrow's classes and what's due next "
+                    "rather than a day that is nearly over. Keep it under about 8 "
+                    "sentences and skip anything that's empty or unavailable.",
     "parameters": {"type": "object", "properties": {}, "required": []}})
 def daily_briefing():
     now = datetime.now()
     mark_briefed()
     sections = [
-        f"DATE/TIME: {now.strftime('%A, %B %d, %Y, %I:%M %p')} (Clayton, Melbourne)",
+        f"DATE/TIME: {stamp(now)} (Clayton, Melbourne) - it is currently "
+        f"{part_of_day(now)}"
+        + (". Today is nearly over, so lead with tomorrow and what's due next."
+           if is_winding_down(now) else "."),
         f"WEATHER:\n{_weather()}",
         f"UNIVERSITY CALENDAR (next 7 days):\n{_calendar()}",
         f"INBOX:\n{_inbox()}",

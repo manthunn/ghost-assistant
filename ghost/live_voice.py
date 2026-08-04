@@ -4,9 +4,9 @@ import queue
 import time
 import sounddevice as sd
 from google.genai import types
-from .brain import client, SYSTEM
+from .brain import client, system_with_time
 from .skills import TOOLS, FUNCTIONS
-from .skills.briefing import should_brief
+from .skills.briefing import should_brief, briefing_prompt
 from .skills.vision import capture_screen_jpeg
 
 MODEL = "gemini-3.1-flash-live-preview"
@@ -144,7 +144,10 @@ async def run(ui, stop_event):
     gemini_tools = [types.Tool(function_declarations=[t["function"] for t in TOOLS])]
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
-        system_instruction=SYSTEM,
+        # Built per session, not imported as a constant: it carries the current
+        # time. Without it the model has no clock and greets you with "good
+        # morning" at 11pm.
+        system_instruction=system_with_time(),
         tools=gemini_tools,
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
@@ -185,10 +188,9 @@ async def run(ui, stop_event):
         # First session of the day (or 6h+ since the last): open with the briefing
         # unprompted, rather than waiting to be asked.
         if should_brief():
-            print("[first session in a while - delivering daily briefing]")
-            ui.set("🔵 Working", "daily briefing")
-            await session.send_realtime_input(
-                text="Give me my daily briefing for today.")
+            print("[first session in a while - delivering briefing]")
+            ui.set("🔵 Working", "briefing")
+            await session.send_realtime_input(text=briefing_prompt())
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for t in done:
