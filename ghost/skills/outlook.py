@@ -85,8 +85,9 @@ def _close_outlook(win):
 
 
 # depth: how many nested outlook_session() blocks are active. launched: whether
-# *Ghost* started Outlook this session (only then may it close it).
-_session = {"depth": 0, "launched": False, "win": None}
+# *Ghost* started Outlook this session (only then may it close it). expanded:
+# account rows Ghost expanded to read them, to be collapsed again afterwards.
+_session = {"depth": 0, "launched": False, "win": None, "expanded": set()}
 
 
 @contextmanager
@@ -116,10 +117,16 @@ def outlook_session():
     finally:
         _session["depth"] -= 1
         if _session["depth"] <= 0:
-            win, launched = _session["win"], _session["launched"]
-            _session.update({"depth": 0, "launched": False, "win": None})
-            if launched and win is not None:
-                _close_outlook(win)
+            win = _session["win"]
+            launched, expanded = _session["launched"], _session["expanded"]
+            _session.update({"depth": 0, "launched": False, "win": None,
+                             "expanded": set()})
+            if win is not None:
+                if launched:
+                    _close_outlook(win)
+                elif expanded:
+                    # Outlook stays open, so put the folder pane back how it was.
+                    _collapse_accounts(win, expanded)
 
 def _list_items(win, wait_secs=18):
     """Message rows, waiting for them to render.
@@ -136,12 +143,76 @@ def _list_items(win, wait_secs=18):
             return items
         time.sleep(1.5)
 
+# UIA ExpandCollapseState values.
+_COLLAPSED, _EXPANDED = 0, 1
+
+
+def _account_rows(win):
+    """The TreeItems whose label is a bare address - i.e. account headers."""
+    rows = []
+    for c in win.descendants():
+        if c.element_info.control_type != "TreeItem":
+            continue
+        label = _clean(c.window_text())
+        if "@" in label and " " not in label:
+            rows.append((label, c))
+    return rows
+
+
+def _expand_accounts(win, wait=2.5):
+    """Expand collapsed account rows. Returns the labels that were expanded.
+
+    Outlook virtualises the folder tree: a COLLAPSED account exposes no child
+    TreeItems whatsoever, so its Inbox is invisible to UI Automation and reads
+    as "no inbox found". That is exactly why the Monash account was skipped in
+    every briefing while the expanded personal account read fine - the mail was
+    there, the folder rows simply did not exist yet.
+    """
+    expanded = []
+    for label, el in _account_rows(win):
+        try:
+            ecp = el.iface_expand_collapse
+            # Expand() on an already-expanded node raises a COMError, so check
+            # the state first rather than expanding blindly.
+            if ecp.CurrentExpandCollapseState != _COLLAPSED:
+                continue
+            ecp.Expand()
+            expanded.append(label)
+        except Exception:
+            continue  # no expand pattern, or the control refused - skip it
+    if expanded:
+        time.sleep(wait)  # child rows render asynchronously after expanding
+    return expanded
+
+
+def _collapse_accounts(win, labels):
+    """Put back the account rows Ghost expanded, so the folder pane is left as
+    it was found - same principle as not closing an Outlook we didn't open."""
+    wanted = set(labels or ())
+    if not wanted:
+        return
+    for label, el in _account_rows(win):
+        if label not in wanted:
+            continue
+        try:
+            if el.iface_expand_collapse.CurrentExpandCollapseState == _EXPANDED:
+                el.iface_expand_collapse.Collapse()
+        except Exception:
+            pass
+
+
 def _accounts(win):
     """[(email, [(folder_label, element), ...]), ...] read off the folder tree.
 
     Account rows are TreeItems whose text is a bare address; every folder row
     after one belongs to it until the next account or the 'Add account' row.
+
+    Collapsed accounts are expanded first - otherwise their folders aren't in
+    the tree at all and the account looks empty.
     """
+    newly = _expand_accounts(win)
+    if newly and _session["depth"] > 0:
+        _session["expanded"].update(newly)
     out, current = [], None
     for c in win.descendants():
         if c.element_info.control_type != "TreeItem":
