@@ -76,6 +76,22 @@ def read_webpage(url: str):
         for t in soup(["script", "style", "nav", "footer"]):
             t.decompose()
         text = " ".join(soup.get_text(" ").split())
-        return text[:3000]
     except Exception as e:
-        return f"Couldn't read page: {e}"
+        text = ""
+        err = str(e)
+    else:
+        err = ""
+    # A JS-rendered page returns an near-empty shell to a plain fetch. Jina
+    # Reader renders it server-side and hands back clean text, no key needed.
+    if len(text) < 200:
+        try:
+            r = requests.get("https://r.jina.ai/" + url, headers=HEADERS, timeout=25)
+            r.raise_for_status()
+            rendered = " ".join(r.text.split())
+            if len(rendered) > len(text):
+                return rendered[:3000]
+        except Exception:
+            pass
+    if not text:
+        return f"Couldn't read page: {err or 'no readable text'}"
+    return text[:3000]
