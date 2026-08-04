@@ -159,7 +159,29 @@ def _account_rows(win):
     return rows
 
 
-def _expand_accounts(win, wait=2.5):
+def _treeitem_count(win):
+    return sum(1 for c in win.descendants()
+               if c.element_info.control_type == "TreeItem")
+
+
+def _wait_for_accounts(win, wait_secs=20):
+    """Wait for the account rows to appear, then return them.
+
+    A freshly launched Outlook reports its window about 5 seconds before the
+    folder pane is populated - measured on a cold start, accounts showed up at
+    ~7s against a window acquired at ~4.7s. Reading straight away finds zero
+    accounts, so nothing gets expanded and the collapsed mailbox stays
+    invisible. Same trap _list_items documents for the message list.
+    """
+    deadline = time.time() + wait_secs
+    while True:
+        rows = _account_rows(win)
+        if rows or time.time() >= deadline:
+            return rows
+        time.sleep(1.0)
+
+
+def _expand_accounts(win, wait_secs=12):
     """Expand collapsed account rows. Returns the labels that were expanded.
 
     Outlook virtualises the folder tree: a COLLAPSED account exposes no child
@@ -169,19 +191,24 @@ def _expand_accounts(win, wait=2.5):
     there, the folder rows simply did not exist yet.
     """
     expanded = []
-    for label, el in _account_rows(win):
+    for label, el in _wait_for_accounts(win):
         try:
             ecp = el.iface_expand_collapse
             # Expand() on an already-expanded node raises a COMError, so check
             # the state first rather than expanding blindly.
             if ecp.CurrentExpandCollapseState != _COLLAPSED:
                 continue
+            before = _treeitem_count(win)
             ecp.Expand()
             expanded.append(label)
+            # Child rows render asynchronously. Poll for them rather than
+            # sleeping a fixed amount - a cold Outlook is still loading and a
+            # guessed delay is either too short (the bug) or wasted time.
+            deadline = time.time() + wait_secs
+            while time.time() < deadline and _treeitem_count(win) <= before:
+                time.sleep(0.5)
         except Exception:
             continue  # no expand pattern, or the control refused - skip it
-    if expanded:
-        time.sleep(wait)  # child rows render asynchronously after expanding
     return expanded
 
 
