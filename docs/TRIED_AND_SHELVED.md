@@ -1,10 +1,10 @@
-# Tried and shelved — things blocked by hardware, not by design
+# Tried and shelved
 
-Notes on work that was built and measured but **not kept**, so a future upgrade can
-pick it straight back up instead of rediscovering all of this. Nothing here is a
-dead end in principle; each was blocked by a specific, documented limit.
+Notes on work that was built and measured but **not kept**, so a future attempt can
+pick it straight back up instead of rediscovering all of this. Each was blocked by a
+specific, documented limit — mostly hardware, once by an upstream system's behaviour.
 
-Hardware this was measured on: **RTX 3060 Laptop, 6 GB VRAM**, Windows 11,
+Hardware the voice work was measured on: **RTX 3060 Laptop, 6 GB VRAM**, Windows 11,
 shared with Vivaldi + VS Code + Spotify (all GPU-accelerated).
 
 ---
@@ -118,7 +118,101 @@ Local FastAPI server on `http://127.0.0.1:17493`, full OpenAPI at `/openapi.json
 
 ---
 
-## 4. Still open (not hardware-blocked)
+## 4. Google Calendar via "secret address in iCal format"
+
+**Goal:** read the Monash timetable, assignment and exam calendars without OAuth.
+
+**Verdict: shelved, permanently.** Replaced by the Calendar API + OAuth
+(`ghost/skills/calendar_feed.py`, `setup_gcal.py`). Do not go back to iCal links.
+
+Each Google Calendar exposes a private iCal URL under *Settings → that calendar →
+Integrate calendar → Secret address in iCal format*. It was genuinely attractive:
+no OAuth, no credentials file, no API to enable, read-only by construction, and the
+URLs sit in gitignored `.env`. It worked for about a day at a time.
+
+### Why it failed
+
+The feeds returned **404 within roughly 24 hours, every time**, and re-pasting fresh
+links bought another day at most. The obvious diagnosis — that the secret token had
+been Reset — was **wrong**, and chasing it wasted several rounds of re-pasting.
+
+The real cause: the **calendar IDs themselves kept changing**.
+
+```
+c_efdb0f46…  →  c_16b7ec89…  →  dead
+```
+
+Monash's timetable/Moodle → Google sync **deletes and recreates** the calendars
+rather than updating them in place. A secret iCal URL is bound to one calendar ID
+for its lifetime, so when the calendar behind it is deleted the link dies with it.
+There is no configuration on our side that survives this — the identifier the link
+depends on is not stable, and never will be.
+
+### Why the API fixes it properly
+
+`calendarList().list()` resolves calendars **by name** at request time — "Classes",
+"Assignments and quizzes", "Final assessments". A recreated calendar keeps its name
+and gets a new ID, so the next call finds it with zero reconfiguration. The only
+thing that can now break the lookup is an actual **rename**, which is handled by
+`GCAL_CLASSES_NAME` / `GCAL_ASSIGNMENTS_NAME` / `GCAL_FINALS_NAME` in `.env`.
+
+`calendar_feed.py` retries once against a freshly-resolved ID when a read 404s
+mid-call, which covers the calendar being recreated between the lookup and the read.
+
+### Two things worth keeping from the iCal version
+
+- **Timezones.** Feed timestamps are UTC/offset-aware; rendering them without
+  `.astimezone()` made a 10 am class read as "12:00 AM" and an 11:55 pm deadline as
+  "1:55 PM". Sort keys also have to be normalised — comparing aware datetimes,
+  naive datetimes and all-day `date`s directly raises `TypeError`. Both carried over.
+- **Recurring events.** The iCal path needed `recurring_ical_events`, because a naive
+  parser reports a weekly class's *original* occurrence, not this week's. The API
+  does this server-side with `singleEvents=True`, so `icalendar` and
+  `recurring-ical-events` were both dropped from `requirements.txt`.
+
+### OAuth gotchas, both hit during the real setup on 2026-08-04
+
+**1. In Testing mode, the project owner is still blocked.** Running
+`setup_gcal.py` against a Testing-status app fails with:
+
+```
+Access blocked: Ghost has not completed the Google verification process
+Error 403: access_denied
+```
+
+Being the developer, the project owner and the account that created the OAuth
+client grants you *nothing* — Testing mode only admits accounts explicitly listed
+under **Audience → Test users**. The fix is to publish, not to add yourself.
+
+**2. Publish to "In production", not "Testing".** Testing expires refresh tokens
+after **7 days**, which would reproduce the original symptom — calendar silently
+stops working after a few days — for a completely unrelated reason.
+`calendar_feed.py` names this explicitly in its refresh-failure message so the
+diagnosis isn't lost next time.
+
+Publishing an unverified personal app to production is fine and is what this
+project does. Consequences, both harmless here:
+
+- Consent shows a **"Google hasn't verified this app"** interstitial — proceed via
+  *Advanced → Go to Ghost (unsafe)*. Distinct from the hard 403 above: this one is
+  clickable, that one isn't.
+- A **100-user lifetime cap** applies to unverified apps requesting sensitive
+  scopes, and it cannot be reset. Irrelevant for a single-user assistant.
+- Google's own verification path is documented as taking 4–6 weeks. Not worth
+  starting for an app with exactly one user.
+
+### Verified working
+
+`setup_gcal.py` completed on 2026-08-04. All three calendars resolved by name on
+the first live call, returning real ECE2072 / ECE2191 / ECE2111 timetable and
+deadline data with correct Melbourne times — a 10 am lab renders as `10:00 AM` and
+an 11:55 pm deadline as `11:55 PM`, confirming both timezone bugs are dead against
+live data and not just fixtures. Token carries a refresh token and the
+`calendar.readonly` scope only.
+
+---
+
+## 5. Still open (not hardware-blocked)
 
 - **Scheduled/background runs.** The briefing and YouTube checks are on-demand or
   fire at startup after a 6 h gap. Nothing is actually cron'd — would need Windows

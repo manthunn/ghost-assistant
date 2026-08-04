@@ -13,5 +13,5 @@ pywinauto
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*
 pywebview
-icalendar
-recurring-ical-events
+google-api-python-client
+google-auth-oauthlib
