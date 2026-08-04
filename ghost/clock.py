@@ -24,6 +24,15 @@ def part_of_day(dt=None):
     return "night"
 
 
+def is_small_hours(dt=None):
+    """Midnight to 4:59 - the window where an unprompted briefing is unwelcome.
+
+    Same boundary part_of_day() uses for "the middle of the night", kept here so
+    the two can't drift apart.
+    """
+    return (dt or datetime.now()).hour < 5
+
+
 def is_winding_down(dt=None):
     """True in the evening/night, when 'today' is nearly over and the useful
     horizon is tomorrow rather than the next few hours."""

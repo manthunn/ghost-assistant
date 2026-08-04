@@ -12,7 +12,7 @@ model and the framing shifts to tomorrow once the evening comes.
 import json
 import pathlib
 from datetime import datetime, timedelta
-from ..clock import part_of_day, stamp, is_winding_down
+from ..clock import part_of_day, stamp, is_winding_down, is_small_hours
 from . import register
 
 STATE_FILE = pathlib.Path(__file__).resolve().parent.parent / "briefing_state.json"
@@ -26,13 +26,27 @@ def _load_state():
             pass
     return {}
 
-def should_brief():
-    """True if Ghost hasn't briefed in REBRIEF_AFTER (or ever)."""
+def should_brief(now=None):
+    """True if Ghost should open with a briefing unprompted.
+
+    Suppressed in the small hours. The gap rule alone fires on time-since-last,
+    not on a schedule, so a 3am session would get the full rundown - weather,
+    inbox, YouTube uploads - which is not what anyone wants at 3am.
+
+    Two deliberate properties:
+    - Only gates the *unprompted* briefing. daily_briefing stays registered, so
+      asking for it at 3am still works.
+    - Does not mark_briefed() when it declines, so the briefing is still owed
+      later that morning rather than being silently swallowed by a 3am session.
+    """
+    now = now or datetime.now()
+    if is_small_hours(now):
+        return False
     last = _load_state().get("last_briefed")
     if not last:
         return True
     try:
-        return datetime.now() - datetime.fromisoformat(last) >= REBRIEF_AFTER
+        return now - datetime.fromisoformat(last) >= REBRIEF_AFTER
     except ValueError:
         return True
 
