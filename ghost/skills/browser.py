@@ -45,7 +45,10 @@ def web_search(query: str):
 _NEEDS_LOGIN = ("claude.ai", "chatgpt.com", "chat.openai.com", "mail.google.com",
                 "gmail.com", "outlook.office.com", "notion.so", "x.com",
                 "twitter.com", "facebook.com", "instagram.com", "linkedin.com",
-                "discord.com", "web.whatsapp.com", "moodle", "monash.edu")
+                "discord.com", "web.whatsapp.com", "moodle", "monash.edu",
+                # FT article bodies are paywalled - fetching one returns a teaser
+                # that reads like the article. Use the ft_news skill instead.
+                "ft.com")
 
 
 @register({"name": "read_webpage",
