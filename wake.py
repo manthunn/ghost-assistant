@@ -13,7 +13,12 @@ signal analysis on the raw samples, so it costs nothing and responds instantly.
 Complements hotkey.py - press F12, say the phrase, or clap twice.
 """
 import sys
-sys.stdout.reconfigure(encoding="utf-8")
+# Guarded because this runs under pythonw.exe from the Startup shortcut, where
+# there is no console and sys.stdout is None. An unguarded reconfigure() raises
+# AttributeError before anything else runs, and pythonw has nowhere to print it
+# - so the listener just silently never started at login.
+if sys.stdout is not None:
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import pathlib
 import subprocess
