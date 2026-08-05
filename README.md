@@ -2,7 +2,7 @@
 
 A hands-free assistant for Windows. You talk to it, it talks back, and in between
 it reads your calendar and inbox, drives applications through UI Automation,
-searches the web, and remembers things between sessions. 40 tools across 16 skill
+searches the web, and remembers things between sessions. 49 tools across 19 skill
 modules, auto-discovered at boot.
 
 Built from scratch in Python.
@@ -22,10 +22,12 @@ What it settled into is a deliberate split:
   a single bidirectional socket doing speech-in, reasoning, tool-calling and
   speech-out natively. No separate STT/TTS stages to synchronise.
 - **Waking is local.** [`wake.py`](wake.py) runs faster-whisper over short
-  rolling windows listening for "hey ghost". This is the whole point of keeping
-  it local: the Live API bills per audio-minute, so idle listening on a cloud
-  session would cost money doing nothing. Ghost only opens a session — and only
-  starts costing anything — once the phrase is actually heard.
+  rolling windows listening for "hey ghost", and analyses the same raw samples
+  for a double clap — signal analysis only, so claps never reach the model and
+  cost nothing. This is the whole point of keeping it local: the Live API bills
+  per audio-minute, so idle listening on a cloud session would cost money doing
+  nothing. Ghost only opens a session — and only starts costing anything — once
+  it is actually woken. Arm it at login with `py install_startup.py --wake`.
 - **Control is local.** Skills drive Outlook, Spotify, the browser and the
   desktop through pywinauto/UIA and native APIs. Nothing about that needs a model.
 
@@ -36,9 +38,9 @@ billing reason.
 
 | Area | Skills |
 | --- | --- |
-| Desktop | `system_control`, `ui_automation`, `vision`, `session_control` |
-| Comms | `outlook` (read mail, compose drafts), `notion` |
-| Time | `calendar_feed` (Google Calendar API), `briefing`, `todo` |
+| Desktop | `system_control`, `ui_automation`, `vision`, `screenshot`, `session_control` |
+| Comms | `outlook` (read mail, compose drafts), `whatsapp` (read, send, call), `notion` |
+| Time | `calendar_feed` (Google Calendar API), `briefing`, `timers`, `todo` |
 | Information | `browser`, `ft_news`, `youtube`, `ai_chats` |
 | Core | `memory`, `agents`, `media` |
 
@@ -49,6 +51,12 @@ Some things worth calling out:
   up by name at request time survives that.
 - **Reads Claude and ChatGPT desktop history.** Both are Electron apps, so the
   same UIA path that reads Outlook reads their conversation sidebars.
+- **Timers outlive Ghost.** Ghost closes itself after five minutes of silence, so
+  an in-process timer would die with it — exactly the case a timer exists for.
+  Each one is a detached process instead.
+- **Sending is gated.** WhatsApp messages and calls reach another person the
+  instant they fire, so they refuse unless the recipient and text have been read
+  back and confirmed out loud.
 - **Refuses to guess.** Skills that can't see something say so — a collapsed
   Outlook mailbox, a login-gated page, a calendar that moved — rather than
   reporting an absence they can't actually verify.
@@ -58,16 +66,19 @@ Some things worth calling out:
 ```
 ghost-assistant/
 ├── main.py              # entry point: UI on the main thread, assistant loop on a daemon thread
-├── wake.py              # local wake-word listener ("hey ghost")
-├── hotkey.py            # F12 launcher, as an alternative to the wake word
+├── wake.py              # local listener: "hey ghost" + double clap
+├── hotkey.py            # F12 launcher, as an alternative to waking by voice
+├── install_startup.py   # arm the listeners at every Windows login
+├── clap_calibrate.py    # measure real claps and tune the detector against them
 ├── setup_gcal.py        # one-time Google Calendar OAuth
 ├── ghost/
 │   ├── live_voice.py    # Gemini Live session: mic, receive loop, idle watchdog
 │   ├── brain.py         # system prompt, Gemini client, turn-based fallback path
 │   ├── clock.py         # time-of-day awareness for the system prompt
+│   ├── alarm_runner.py  # detached one-shot alerter, outlives Ghost closing
 │   ├── ui3d.py          # pywebview window
 │   ├── webui/           # WebGL particle sphere that reacts to Ghost's voice
-│   └── skills/          # 16 auto-loaded modules, 40 registered tools
+│   └── skills/          # 19 auto-loaded modules, 49 registered tools
 ├── docs/TRIED_AND_SHELVED.md
 └── .env                 # keys — never committed
 ```
@@ -139,6 +150,17 @@ Say **"goodbye ghost"** to exit.
 - **A model with no clock will guess, and it guesses "morning".** The system
   prompt claimed each message carried a timestamp; the Live path never added one.
   Nothing errored — it just greeted you cheerfully at 11pm.
+- **Fixtures you write yourself only test your own assumptions.** Double-clap
+  detection passed a full synthetic suite through three rounds of tuning while
+  being completely broken in the room. The bug was inverted: the decay test used
+  an absolute floor, and real claps hit full scale and ring for ~86 ms, so *the
+  louder the clap the more certainly it was discarded*. What found it was
+  `clap_calibrate.py` — record real audio, run the production detector over it.
+  Build that harness first for anything sensor-facing.
+- **`pythonw.exe` has no console, so `sys.stdout` is `None`.** An unguarded
+  `sys.stdout.reconfigure()` raises on the first line and pythonw has nowhere to
+  print it, so a Startup-launched listener dies in milliseconds looking exactly
+  like a feature that "just doesn't work".
 
 ## Roadmap
 
