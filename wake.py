@@ -47,10 +47,16 @@ PHRASES = (
 # not loudness alone.
 CLAP_ENABLED = True
 CLAP_FRAME_SECS = 0.008      # 8 ms analysis frames
-# Measured from real claps on the Razer Seiren V3 Mini: room background sits at
-# 0.00003 and claps peak at ~1.0 (effectively full scale). 0.30 is far above
-# speech while leaving 3x headroom under a real clap.
-CLAP_ABS_MIN = 0.30          # absolute peak floor; claps are genuinely loud
+# Measured from real claps on the Razer Seiren V3 Mini across two runs: room
+# background 0.00003, claps peaking at ~1.0 one run and ~0.67 the next. That
+# variation is the point - 0.30 was tuned to the louder run and only 7 frames
+# cleared it on the quieter one, so a pair was missed. 0.18 is ~6000x the room
+# floor and still leaves ~3.7x headroom under a quiet clap.
+#
+# Speech is louder than this, and that is fine: it is rejected by the decay
+# test, not by loudness. A plosive is followed by a vowel, so the level does
+# not collapse to a third of its peak within 100 ms the way a clap does.
+CLAP_ABS_MIN = 0.18          # absolute peak floor; claps are genuinely loud
 CLAP_RATIO = 6.0             # ...and this much above the running background
 CLAP_DECAY_SECS = 0.10       # how long after onset the decay is checked
 # Decay is judged RELATIVE to the clap's own peak, not against an absolute
