@@ -47,13 +47,19 @@ PHRASES = (
 # not loudness alone.
 CLAP_ENABLED = True
 CLAP_FRAME_SECS = 0.008      # 8 ms analysis frames
-# Measured on the Razer Seiren V3 Mini: ambient room noise peaks at 0.0005, so
-# the original 0.18 (picked against synthetic claps, not a real mic) was ~360x
-# the noise floor and almost certainly unreachable. 0.08 is still 160x ambient.
-# Run clap_calibrate.py to replace this with a number measured from real claps.
-CLAP_ABS_MIN = 0.08          # absolute peak floor; claps are genuinely loud
+# Measured from real claps on the Razer Seiren V3 Mini: room background sits at
+# 0.00003 and claps peak at ~1.0 (effectively full scale). 0.30 is far above
+# speech while leaving 3x headroom under a real clap.
+CLAP_ABS_MIN = 0.30          # absolute peak floor; claps are genuinely loud
 CLAP_RATIO = 6.0             # ...and this much above the running background
-CLAP_DECAY_SECS = 0.09       # must fall back to background within this
+CLAP_DECAY_SECS = 0.10       # how long after onset the decay is checked
+# Decay is judged RELATIVE to the clap's own peak, not against an absolute
+# level. Measured claps hit full scale and are still ringing above any fixed
+# floor 100 ms later, so an absolute test rejected every real clap - the louder
+# the clap, the more certainly it was thrown away. A ratio is scale-invariant:
+# what makes a clap a clap is that it collapses to a fraction of its own peak,
+# whether that peak was 0.4 or 1.0.
+CLAP_DECAY_RATIO = 0.35      # must fall to this fraction of its own peak
 CLAP_REFRACTORY = 0.10       # ignore this long after an onset (echo, decay)
 CLAP_MIN_GAP = 0.12          # two claps closer than this are one clap echoing
 CLAP_MAX_GAP = 0.70          # ...further apart than this isn't a double clap
@@ -77,6 +83,8 @@ class ClapDetector:
         self.pending = None      # time of the first clap of a possible pair
         self.blocked_until = 0.0
         self.armed_at = None     # onset being checked for a fast decay
+        self.armed_peak = 0.0    # that onset's peak, to judge decay against
+        self.saw_quiet = True    # has the room gone quiet since the last onset?
 
     def feed(self, samples, block_start):
         """samples: float32 mono. block_start: absolute time of sample 0.
@@ -91,17 +99,29 @@ class ClapDetector:
 
             # Confirm a previous onset actually decayed like a clap rather than
             # being the start of a shout or a sustained noise.
-            if self.armed_at is not None and t - self.armed_at >= CLAP_DECAY_SECS:
-                decayed = peak < max(CLAP_ABS_MIN * 0.5, self.bg * 3.0)
-                onset = self.armed_at
-                self.armed_at = None
-                if decayed:
-                    hit = self._register(onset) or hit
+            if self.armed_at is not None:
+                # Track the true peak: the loudest frame may land just after
+                # the one that crossed the threshold.
+                self.armed_peak = max(self.armed_peak, peak)
+                if t - self.armed_at >= CLAP_DECAY_SECS:
+                    decayed = peak <= self.armed_peak * CLAP_DECAY_RATIO
+                    onset = self.armed_at
+                    self.armed_at = None
+                    if decayed:
+                        hit = self._register(onset) or hit
 
             if t >= self.blocked_until and self.armed_at is None:
                 if peak >= CLAP_ABS_MIN and peak >= self.bg * CLAP_RATIO:
                     self.armed_at = t
+                    self.armed_peak = peak
                     self.blocked_until = t + CLAP_REFRACTORY
+
+            # Two claps are two separate events, so the room must actually go
+            # quiet in between. Without this, one clap plus its echo - or any
+            # continuous loud stretch - can present as a pair, because the gap
+            # between the two onsets alone looks right.
+            if peak < CLAP_ABS_MIN * 0.2:
+                self.saw_quiet = True
 
             # Track background from quiet frames only, so a clap doesn't raise
             # the bar against its own partner.
@@ -113,7 +133,11 @@ class ClapDetector:
         return hit
 
     def _register(self, t):
-        if self.pending is not None and CLAP_MIN_GAP <= t - self.pending <= CLAP_MAX_GAP:
+        paired = (self.pending is not None
+                  and CLAP_MIN_GAP <= t - self.pending <= CLAP_MAX_GAP
+                  and self.saw_quiet)
+        self.saw_quiet = False
+        if paired:
             self.pending = None
             return t
         self.pending = t          # first clap, or too late to pair - restart
@@ -122,6 +146,7 @@ class ClapDetector:
     def reset(self):
         self.pending = None
         self.armed_at = None
+        self.armed_peak = 0.0
 
 
 _proc = None
