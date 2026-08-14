@@ -5,6 +5,7 @@ import time
 import numpy as np
 import sounddevice as sd
 from google.genai import types
+from .audio_ducking import start_watching
 from .brain import client, system_with_time
 from .skills import TOOLS, FUNCTIONS
 from .skills.briefing import should_brief, briefing_prompt
@@ -205,6 +206,10 @@ async def run(ui, stop_event):
         mic_stream.start()
         threading.Thread(target=_level_pump, args=(ui, player, stop_event),
                          daemon=True).start()
+        # Dim Spotify/YouTube/whatever while Ghost talks, restore when it stops.
+        # Driven off the same is_active() signal as the mic mute, so ducking and
+        # un-muting can never disagree about whether Ghost is speaking.
+        ducker = start_watching(player, stop_event)
         ui.set("🟢 Listening")
         # Run mic, receive and idle-watchdog concurrently: the receive loop blocks
         # awaiting server messages, so the watchdog needs to be its own task to be
@@ -227,6 +232,12 @@ async def run(ui, stop_event):
                     print(f"  [session ended on error] {t.exception()}")
         finally:
             stop_event.set()
+            # Restore volumes first and synchronously: if this session is ending
+            # because of an error, the user's music must not be left at 20%.
+            try:
+                ducker.restore()
+            except Exception:
+                pass
             for t in tasks:
                 t.cancel()
             mic_q.put_nowait(None)  # unblock the mic thread's blocking get()
