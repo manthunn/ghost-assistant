@@ -20,10 +20,18 @@ import pathlib
 import subprocess
 import keyboard
 
-# F12 alone is unreliable: browsers claim it for DevTools and VS Code for
-# Go-to-Definition, so the focused app swallows it before the global hook sees
-# it. Ctrl+Alt+G is the dependable one; F12 stays for when nothing has grabbed it.
-HOTKEYS = ["ctrl+alt+g", "ctrl+shift+f12", "f12"]
+# F12 only, by request. Ctrl+Alt+G and Ctrl+Shift+F12 were here as fallbacks
+# because browsers claim F12 for DevTools and VS Code for Go-to-Definition.
+#
+# The low-level hook still runs ahead of the focused window, so the callback
+# should fire even when an app also acts on the key. If presses stop reaching
+# the log, suppress=True on add_hotkey is the fix - it stops the focused app
+# seeing F12 at all. That is normally banned here because suppressing a
+# ctrl+alt+* combo delays every Ctrl press (diagnosed as laggy crouch in
+# Valorant, 2026-08-12), but that reasoning does not apply to a bare F12: there
+# is no modifier prefix to swallow, so only F12 itself would be held. The cost
+# is losing Go-to-Definition and DevTools on that key.
+HOTKEYS = ["f12"]
 ROOT = pathlib.Path(__file__).resolve().parent
 MAIN = ROOT / "main.py"
 LOG = ROOT / "hotkey.log"
@@ -40,12 +48,16 @@ def log(msg):
     if sys.stdout is not None:
         print(line)
 
-def launch():
+def launch(which="F12"):
+    # Log which key actually fired. It used to say "F12 pressed" whichever of
+    # the three combos triggered it, so the log couldn't answer whether F12
+    # itself was ever reaching the hook - which is exactly the question that
+    # came up when it stopped working.
     global _proc
     if _proc is not None and _proc.poll() is None:
-        log("F12 pressed - Ghost is already running, ignoring.")
+        log(f"{which} pressed - Ghost is already running, ignoring.")
         return False
-    log(f"F12 pressed - starting Ghost ({MAIN.name})")
+    log(f"{which} pressed - starting Ghost ({MAIN.name})")
     # Use the console python for Ghost itself so its output stays visible, even
     # when this listener is running windowless under pythonw.exe.
     exe = pathlib.Path(sys.executable)
@@ -67,7 +79,7 @@ def main():
     armed = []
     for hk in HOTKEYS:
         try:
-            keyboard.add_hotkey(hk, launch)
+            keyboard.add_hotkey(hk, lambda k=hk: launch(k.upper()))
             armed.append(hk)
         except Exception as e:
             log(f"couldn't register {hk}: {e}")
