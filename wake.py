@@ -20,6 +20,7 @@ import sys
 if sys.stdout is not None:
     sys.stdout.reconfigure(encoding="utf-8")
 
+import datetime
 import pathlib
 import subprocess
 import time
@@ -28,6 +29,24 @@ import sounddevice as sd
 
 ROOT = pathlib.Path(__file__).resolve().parent
 MAIN = ROOT / "main.py"
+LOG = ROOT / "wake.log"
+
+
+def log(msg):
+    """Same pattern as hotkey.py, and for the same reason.
+
+    Under pythonw there is no console, so a failure at login leaves no trace
+    anywhere and the listener simply isn't running with nothing to explain why.
+    hotkey.log is what made "F12 works" provable; wake.py had no equivalent.
+    """
+    line = f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}  {msg}"
+    try:
+        with LOG.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+    if sys.stdout is not None:
+        print(line)
 
 RATE = 16000
 WINDOW_SECS = 3.0        # rolling buffer length fed to whisper
@@ -188,7 +207,7 @@ def _launch():
 
 def main():
     if not MAIN.exists():
-        print(f"Can't find {MAIN} - run this from the ghost-assistant folder.")
+        log(f"Can't find {MAIN} - run this from the ghost-assistant folder.")
         return
     model = _model()
     buf = np.zeros(0, dtype=np.float32)
@@ -198,7 +217,7 @@ def main():
     claps = ClapDetector(RATE)
 
     trigger = '"hey ghost"' + (" or a double clap" if CLAP_ENABLED else "")
-    print(f"Listening for {trigger} (Ctrl+C to stop)...")
+    log(f"listener armed - {trigger}")
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32",
                         blocksize=hop) as stream:
         while True:
@@ -235,8 +254,31 @@ def main():
                     muted_until = time.time() + COOLDOWN_SECS
                 buf = np.zeros(0, dtype=np.float32)
 
+def _model_and_stream_ready():
+    """Retry startup, because at login the machine often isn't ready yet.
+
+    The Startup shortcut fires the moment the desktop appears, while the audio
+    endpoint is still enumerating and the CUDA driver is still initialising.
+    sd.InputStream() raising there kills the process outright - which is
+    exactly what happened: hotkey.py armed at 11:37:51 on the same login and
+    wake.py simply wasn't running, with nothing anywhere to say why.
+    """
+    delay = 5
+    for attempt in range(1, 7):
+        try:
+            main()
+            return
+        except KeyboardInterrupt:
+            log("listener stopped")
+            return
+        except Exception as e:
+            log(f"startup attempt {attempt} failed ({type(e).__name__}: {e})"
+                + (f" - retrying in {delay}s" if attempt < 6 else " - giving up"))
+            if attempt == 6:
+                return
+            time.sleep(delay)
+            delay = min(delay * 2, 60)
+
+
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nWake-word listener stopped.")
+    _model_and_stream_ready()
