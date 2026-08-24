@@ -33,6 +33,13 @@ CACHE_TTL = timedelta(minutes=15)
 _cal_cache = None  # (fetched_at, [events])
 
 
+# Monash brands Moodle as "MonashELMS1", so a real tab title reads
+# "Assignment 2 [Python] (page 1 of 5) | MonashELMS1 - Vivaldi" - it contains
+# neither "moodle" nor "learning.monash.edu". Matching only on those two names
+# meant this reported "no Moodle tab found" while one was open on screen.
+MOODLE_TITLE_HINTS = ("monashelms", "moodle", "learning.monash.edu")
+
+
 def _fmt_ical_hint():
     return ("Get it from learning.monash.edu -> Calendar -> the gear/settings "
             "icon -> Export calendar -> choose 'This calendar' (or tick the "
@@ -141,7 +148,7 @@ def read_moodle_dashboard():
     try:
         for w in Desktop(backend="uia").windows():
             text = (w.window_text() or "").lower()
-            if "moodle" in text or "learning.monash.edu" in text:
+            if any(k in text for k in MOODLE_TITLE_HINTS):
                 win = w
                 break
     except Exception as e:
@@ -154,10 +161,17 @@ def read_moodle_dashboard():
                 "monash.edu needs the user's own logged-in browser session.")
     try:
         win.set_focus()
-        time.sleep(1.2)
+        time.sleep(2.5)   # Chromium repopulates its tree lazily after focus
     except Exception:
         pass  # some windows refuse focus; reading may still partly work
 
+    # NOTE: the text below includes Vivaldi's own furniture - tab bar, toolbars
+    # and the titles of other open tabs - before the page content proper.
+    # Scoping to a Document subtree was tried and does not separate them:
+    # Vivaldi's interface is itself a web document and the page is nested inside
+    # it. Roughly the first 600 characters are chrome; the Moodle content
+    # follows. Left as-is rather than filtered by guesswork, since a fragile
+    # filter would silently drop real page text.
     chunks, seen = [], set()
     try:
         for c in win.descendants():
