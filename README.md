@@ -2,7 +2,7 @@
 
 A hands-free assistant for Windows. You talk to it, it talks back, and in between
 it reads your calendar and inbox, drives applications through UI Automation,
-searches the web, and remembers things between sessions. 49 tools across 19 skill
+searches the web, and remembers things between sessions. 60 tools across 22 skill
 modules, auto-discovered at boot.
 
 Built from scratch in Python.
@@ -78,7 +78,7 @@ ghost-assistant/
 │   ├── alarm_runner.py  # detached one-shot alerter, outlives Ghost closing
 │   ├── ui3d.py          # pywebview window
 │   ├── webui/           # WebGL particle sphere that reacts to Ghost's voice
-│   └── skills/          # 19 auto-loaded modules, 49 registered tools
+│   └── skills/          # 22 auto-loaded modules, 60 registered tools
 ├── docs/TRIED_AND_SHELVED.md
 └── .env                 # keys — never committed
 ```
