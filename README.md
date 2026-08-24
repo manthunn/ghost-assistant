@@ -39,10 +39,10 @@ billing reason.
 | Area | Skills |
 | --- | --- |
 | Desktop | `system_control`, `ui_automation`, `vision`, `screenshot`, `session_control` |
-| Comms | `outlook` (read mail, compose drafts), `whatsapp` (read, send, call), `notion` |
+| Comms | `outlook` (read mail, compose drafts), `whatsapp` (read, send, call), `discord_chat` (channels and DMs), `notion` |
 | Time | `calendar_feed` (Google Calendar API), `moodle` (Moodle calendar + dashboard), `briefing`, `timers`, `todo` |
 | Information | `browser`, `ft_news`, `youtube`, `ai_chats` |
-| Core | `memory`, `agents`, `media` |
+| Core | `memory`, `agents`, `media`, `self_upgrade` (Ghost writes its own new skills) |
 
 Some things worth calling out:
 
@@ -57,6 +57,11 @@ Some things worth calling out:
 - **Sending is gated.** WhatsApp messages and calls reach another person the
   instant they fire, so they refuse unless the recipient and text have been read
   back and confirmed out loud.
+- **Ghost extends itself.** Ask for a capability it lacks and it hands the
+  request to Claude Code headlessly, which writes and tests the code on its own
+  git worktree and branch. Nothing merges automatically, and it never restarts
+  itself: a broken skill in the live tree would stop Ghost importing, and you
+  could no longer ask Ghost to fix it.
 - **Refuses to guess.** Skills that can't see something say so — a collapsed
   Outlook mailbox, a login-gated page, a calendar that moved — rather than
   reporting an absence they can't actually verify.
