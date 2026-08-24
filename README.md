@@ -40,7 +40,7 @@ billing reason.
 | --- | --- |
 | Desktop | `system_control`, `ui_automation`, `vision`, `screenshot`, `session_control` |
 | Comms | `outlook` (read mail, compose drafts), `whatsapp` (read, send, call), `notion` |
-| Time | `calendar_feed` (Google Calendar API), `briefing`, `timers`, `todo` |
+| Time | `calendar_feed` (Google Calendar API), `moodle` (Moodle calendar + dashboard), `briefing`, `timers`, `todo` |
 | Information | `browser`, `ft_news`, `youtube`, `ai_chats` |
 | Core | `memory`, `agents`, `media` |
 
@@ -115,6 +115,9 @@ Create `.env`:
 ```
 GOOGLE_API_KEY=...      # required
 NOTION_TOKEN=...        # optional, for the Notion skill
+MOODLE_ICAL_URL=...     # optional, for the Moodle calendar - get it from
+                        # learning.monash.edu -> Calendar -> gear icon ->
+                        # Export calendar -> "This calendar"
 ```
 
 Calendar needs a one-time OAuth step — enable the Google Calendar API, create a
