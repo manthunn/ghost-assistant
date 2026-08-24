@@ -56,6 +56,87 @@ def _jobs():
     return out
 
 
+
+def _branch_exists(branch):
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", branch],
+                       cwd=str(ROOT), capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def _age_days(job):
+    stamp = job.get("finished") or job.get("started")
+    if not stamp:
+        return 999.0
+    try:
+        from datetime import datetime
+        return (datetime.now() - datetime.fromisoformat(stamp)).total_seconds() / 86400
+    except Exception:
+        return 999.0
+
+
+
+def _inside_upgrades(path):
+    """True only for paths genuinely under ../ghost-upgrades/.
+
+    The worktree path is read from a job file, so it is untrusted input to a
+    recursive delete. Resolve both sides and confirm containment rather than
+    string-matching a prefix.
+    """
+    try:
+        base = (ROOT.parent / "ghost-upgrades").resolve()
+        target = pathlib.Path(path).resolve()
+        return target != base and base in target.parents
+    except Exception:
+        return False
+
+
+def _prune_worktrees(max_age_days=14):
+    """Remove worktrees that no longer have anything to review.
+
+    Each upgrade leaves a full checkout behind, so without this they pile up in
+    ../ghost-upgrades/ forever - one per request, each a copy of the repo.
+
+    A worktree is kept only while it still holds something a human might want:
+    a job that is running, or one that produced a branch that still exists. Once
+    the branch has been merged or deleted, the worktree is just a stale copy of
+    code that is now either in main or deliberately discarded.
+    """
+    removed = []
+    for job in _jobs():
+        wt, branch, status = job.get("worktree"), job.get("branch"), job.get("status")
+        if status == "running" or not wt:
+            continue
+        if status == "ready" and branch and _branch_exists(branch):
+            continue          # still awaiting review - leave it alone
+        if status == "ready" and _age_days(job) < max_age_days and branch and                 _branch_exists(branch):
+            continue
+        if not pathlib.Path(wt).exists():
+            continue
+        r = subprocess.run(["git", "worktree", "remove", wt, "--force"],
+                           cwd=str(ROOT), capture_output=True, text=True)
+        if r.returncode == 0:
+            removed.append(pathlib.Path(wt).name)
+        elif _inside_upgrades(wt):
+            # git refuses when it no longer tracks the path - which is the normal
+            # state once the branch has been deleted, or after someone removed
+            # the worktree by hand. The directory is still on disk either way.
+            # Guarded by _inside_upgrades because this path comes out of a JSON
+            # file: a recursive delete must never be able to point elsewhere.
+            import shutil
+            shutil.rmtree(wt, ignore_errors=True)
+            if not pathlib.Path(wt).exists():
+                removed.append(pathlib.Path(wt).name)
+    # Clears git's records for worktrees whose directory was deleted by hand.
+    subprocess.run(["git", "worktree", "prune"], cwd=str(ROOT), capture_output=True)
+    try:
+        parent = ROOT.parent / "ghost-upgrades"
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+    except Exception:
+        pass
+    return removed
+
+
 @register({"name": "improve_ghost",
     "description": "Have Ghost write a new capability for itself. Use when the user "
                     "asks Ghost to gain an ability it doesn't have - 'learn to read my "
@@ -86,6 +167,9 @@ def improve_ghost(request: str):
     if running:
         return (f"An upgrade is already running ('{running[0].get('request', '')[:60]}'). "
                 f"Wait for that one to finish before starting another.")
+
+    # Tidy up before adding another checkout to the pile.
+    _prune_worktrees()
 
     job_id = time.strftime("%Y%m%d-%H%M%S")
     flags = 0
@@ -132,3 +216,20 @@ def check_upgrades():
             "\n\nNothing is merged. Summarise conversationally; if something is ready, "
             "say it's on a branch waiting for him to look at, and don't claim Ghost "
             "can already do it.")
+
+
+@register({"name": "cleanup_upgrades",
+    "description": "Tidy up leftover Ghost self-upgrade working copies. Each upgrade "
+                    "leaves a full checkout of the repo behind; this removes the ones "
+                    "whose branch has already been merged or deleted. Use for 'clean "
+                    "up the upgrade folders' or if disk space is a concern. Never "
+                    "removes an upgrade that is still building or still waiting to be "
+                    "reviewed.",
+    "parameters": {"type": "object", "properties": {}, "required": []}})
+def cleanup_upgrades():
+    removed = _prune_worktrees()
+    if not removed:
+        return ("Nothing to clean up - no leftover upgrade working copies. Anything "
+                "still building or awaiting review was left alone.")
+    return (f"Removed {len(removed)} leftover upgrade working copies: "
+            f"{', '.join(removed)}. Branches still awaiting review were left alone.")
