@@ -15,9 +15,12 @@ import sys
 if sys.stdout is not None:                     # None under pythonw.exe
     sys.stdout.reconfigure(encoding="utf-8")
 
+import ctypes
 import datetime
 import pathlib
 import subprocess
+import threading
+import time
 import keyboard
 
 # F12 only, by request. Ctrl+Alt+G and Ctrl+Shift+F12 were here as fallbacks
@@ -48,7 +51,53 @@ def log(msg):
     if sys.stdout is not None:
         print(line)
 
+VK_F12 = 0x7B
+POLL_SECS = 0.04
+DEBOUNCE = 1.5      # one physical press must not fire hook AND poll
+_last_fire = 0.0
+_fire_lock = threading.Lock()
+
+
+def _fallback_poll():
+    """Watch F12 directly, as a backstop for the keyboard hook dying.
+
+    Windows silently removes a low-level keyboard hook whose callback overruns
+    LowLevelHooksTimeout, and it never re-arms - the listener keeps running and
+    simply stops seeing keys, which looks exactly like "the hotkey randomly
+    doesn't work". Elevated foreground windows can block hook delivery too.
+
+    GetAsyncKeyState reads the key state directly rather than depending on the
+    hook chain, so it still fires in both cases. Which path fired is logged, so
+    the log now distinguishes "hook is dead" from "he never pressed it" - a
+    distinction the old log could not make at all.
+    """
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    was_down = False
+    while True:
+        try:
+            down = bool(user32.GetAsyncKeyState(VK_F12) & 0x8000)
+            if down and not was_down:
+                launch("F12 (fallback poll - the keyboard hook did not fire)")
+            was_down = down
+        except Exception:
+            pass
+        time.sleep(POLL_SECS)
+
+
 def launch(which="F12"):
+    # Debounced because the hook and the poll both watch the same key; a single
+    # press must not start Ghost twice.
+    global _last_fire
+    with _fire_lock:
+        if time.monotonic() - _last_fire < DEBOUNCE:
+            return False
+        _last_fire = time.monotonic()
+    return _launch(which)
+
+
+def _launch(which="F12"):
     # Log which key actually fired. It used to say "F12 pressed" whichever of
     # the three combos triggered it, so the log couldn't answer whether F12
     # itself was ever reaching the hook - which is exactly the question that
@@ -86,7 +135,8 @@ def main():
     if not armed:
         log("no hotkeys could be registered - giving up")
         return
-    log("listener armed - " + " or ".join(h.upper() for h in armed))
+    threading.Thread(target=_fallback_poll, daemon=True).start()
+    log("listener armed - " + " or ".join(h.upper() for h in armed) + " (+ fallback poll)")
     try:
         keyboard.wait()
     except KeyboardInterrupt:
