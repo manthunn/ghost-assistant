@@ -15,6 +15,7 @@ the running assistant is untouched until a human merges.
 """
 import ctypes
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -105,11 +106,16 @@ def main():
         return 1
 
     try:
+        # Ghost loads .env into os.environ, and this process inherits it. If
+        # ANTHROPIC_API_KEY is present (even a placeholder), the claude CLI uses
+        # it instead of its own login and fails with "Invalid API key". Strip it
+        # so the CLI authenticates the way it does from a terminal.
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         proc = subprocess.run(
             [str(CLAUDE), "-p", BRIEF.format(request=request),
              "--permission-mode", "acceptEdits",
              "--allowedTools", ALLOWED],
-            cwd=str(wt), capture_output=True, text=True, timeout=TIMEOUT)
+            cwd=str(wt), capture_output=True, text=True, timeout=TIMEOUT, env=env)
         summary = (proc.stdout or proc.stderr or "").strip()
     except subprocess.TimeoutExpired:
         write(job_id, status="failed", error=f"timed out after {TIMEOUT // 60} minutes")
