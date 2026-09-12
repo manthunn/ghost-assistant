@@ -4,559 +4,299 @@
 <meta charset="utf-8">
 <title>Ghost</title>
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #04060b; height: 100%;
-               font-family: 'Consolas', 'SF Mono', monospace; }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #04060d; height: 100%; }
   #scene { position: fixed; inset: 0; }
-  .corner {
-    position: fixed; z-index: 10; font-size: 10px; letter-spacing: 0.22em;
-    text-transform: uppercase; color: #8b95a8; user-select: none;
-    -webkit-app-region: drag; opacity: .85;
-  }
-  #tl { left: 30px; top: 22px; }
-  #tr { right: 30px; top: 22px; text-align: right; }
-  #br { right: 30px; bottom: 26px; text-align: right; color: #6a7386; }
-  .corner .sub { display: block; margin-top: 5px; font-size: 9px; color: #5b6476; letter-spacing: .18em; }
   #hud {
-    position: fixed; left: 30px; bottom: 26px; z-index: 10;
-    color: #dfe6f5; user-select: none; -webkit-app-region: drag;
+    position: fixed; left: 38px; bottom: 34px; z-index: 10;
+    font-family: 'Consolas', 'SF Mono', monospace; color: #dfe6f5;
+    user-select: none; -webkit-app-region: drag;
   }
   #hud .state {
     font-size: 13px; letter-spacing: 0.34em; text-transform: uppercase;
-    display: flex; align-items: center; gap: 12px; opacity: 0.95;
+    display: flex; align-items: center; gap: 12px; opacity: 0.92;
   }
   #hud .dot {
-    width: 7px; height: 7px; background: #7fd8ff; color: #7fd8ff;
-    box-shadow: 0 0 12px 1px currentColor; transition: background .5s, color .5s;
+    width: 7px; height: 7px; border-radius: 50%; background: #3ecf6a;
+    box-shadow: 0 0 14px 2px currentColor; color: #3ecf6a;
+    transition: background .5s, color .5s;
   }
   #hud .detail {
-    font-size: 11px; letter-spacing: 0.16em; color: #6b7386;
-    margin-top: 9px; margin-left: 19px; min-height: 13px; max-width: 60vw;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 11px; letter-spacing: 0.16em; color: #5d6478;
+    margin-top: 9px; margin-left: 19px; min-height: 13px;
   }
-  /* Dither, not decoration: a dark gradient bands in 8-bit sRGB, noise breaks
-     the bands up. Kept from the previous face for the same reason. */
+  /* Dither, not decoration. A dark radial gradient quantises into visible
+     concentric rings in 8-bit sRGB - there aren't enough distinct values near
+     black to ramp smoothly. Random noise on top breaks the bands up. This
+     replaced 1px scanlines, which also produced moire against the pixel grid
+     under display scaling. */
   #grain {
-    position: fixed; inset: 0; z-index: 5; pointer-events: none; opacity: .05;
+    position: fixed; inset: 0; z-index: 5; pointer-events: none; opacity: .045;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
   }
+  /* Shallower and starting further out than before: the shorter the ramp, the
+     fewer steps there are to band. */
   #vignette {
     position: fixed; inset: 0; z-index: 4; pointer-events: none;
-    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(2,4,10,.55) 100%);
+    background: radial-gradient(ellipse at center,
+      rgba(0,0,0,0) 62%, rgba(2,4,10,.45) 100%);
   }
 </style>
 </head>
 <body>
-<canvas id="scene"></canvas>
+<div id="scene"></div>
 <div id="vignette"></div>
 <div id="grain"></div>
-<div class="corner" id="tl">Processing data streams<span class="sub" id="tl-sub">acquiring feeds</span></div>
-<div class="corner" id="tr">Processing digital grid<span class="sub" id="tr-sub">record: digital network</span></div>
-<div class="corner" id="br"><span id="clock">00:00:00</span><span class="sub">UTC / ghost gods-eye</span></div>
 <div id="hud">
   <div class="state"><span class="dot" id="dot"></span><span id="word">Booting</span></div>
   <div class="detail" id="detail"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
 // ---------------------------------------------------------------------------
-// Ghost's face, God's Eye edition. A fragmented grid of surveillance feed
-// tiles, a wireframe globe, drifting target reticles and a data readout, in
-// the style of the Furious 7 interface.
+// Ghost's face. One GPU particle sphere that reacts to the pointer and to
+// Ghost's actual speaking voice.
 //
-// Everything is Canvas 2D. The feeds are procedural: a few small noise
-// bitmaps drawn at offsets, with scanlines and a slow drifting shadow on top,
-// so nothing is fetched and nothing is a real camera. The expensive part
-// (noise generation) happens a few times a second into offscreen canvases;
-// the per-frame work is drawImage and line drawing.
+// Everything that moves is computed in the vertex shader. The old scene moved
+// meshes from JavaScript, which is why it never felt smooth - 60k points cannot
+// be repositioned per frame on the CPU. Here the CPU only updates a handful of
+// uniforms and the GPU does the rest.
 //
-// Two inputs arrive from Python (see ui3d.py), unchanged from the old face:
-//   window.updateGhostState(word, detail)  - state name, drives the accent
+// Two inputs arrive from Python (see ui3d.py):
+//   window.updateGhostState(word, detail)  - state name, drives colour
 //   window.ghostLevel(v)                   - 0..1 speaking loudness, ~25Hz
-// Loudness drives how chaotic the grid is: tiles glitch and re-tile faster,
-// the reticle pulses, the readout waveform moves. Silence settles it back to
-// an orderly grid, which is the "clean grid to chaotic stream" transition the
-// film interface does.
 // ---------------------------------------------------------------------------
 
-// Accent per state. The film palette is grey-white text, orange for the
-// active readout and red for target locks, so states are mostly kept in that
-// family. Thinking stays the one amber note, as before.
-const ACCENT = {
-  Listening: "#7fd8ff",
-  Working:   "#ff8a3d",
-  Thinking:  "#ffb347",
-  Speaking:  "#ff4d4d",
-  Offline:   "#4a5261",
-  Booting:   "#6b7585",
+// Deliberately a narrow cool family (cyan -> azure -> violet) rather than one
+// hue per state. Spread across the whole wheel, states read as status LEDs;
+// kept close, they read as one thing changing mood. Thinking is the single
+// warm note, so "I'm busy" is unmistakable without a legend.
+// Luminance is held roughly level so no state looks dimmer than another, and
+// saturation stays high because additive blending washes dense areas toward
+// white anyway.
+const COLORS = {
+  Listening: [0.16, 0.87, 0.80],   // #29DECC  teal - calm, receptive
+  Working:   [0.29, 0.61, 1.00],   // #4A9CFF  azure - active
+  Thinking:  [1.00, 0.76, 0.40],   // #FFC266  amber - the one warm note
+  Speaking:  [0.63, 0.51, 1.00],   // #A182FF  violet - voice
+  Offline:   [0.24, 0.27, 0.34],   // #3D4457  slate, well below the rest
+  Booting:   [0.34, 0.39, 0.50],   // #576480  slate, a touch brighter
 };
-const TEXT = "#9aa6b8", DIM = "#4d5668", RED = "#ff3b3b";
 
-const canvas = document.getElementById("scene");
-const ctx = canvas.getContext("2d", { alpha: false });
-const DPR = Math.min(window.devicePixelRatio || 1, 1.5);
-let W = 0, H = 0;
+// Density is a look decision, not a performance one. Past ~30k the points
+// overlap into a continuous shell and you lose the individual particles that
+// make this read as a point cloud rather than a sphere.
+const COUNT = 9000;
+const RADIUS = 13.0;
 
-function resize() {
-  W = window.innerWidth; H = window.innerHeight;
-  canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
-  canvas.style.width = W + "px"; canvas.style.height = H + "px";
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  layout();
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(
+  52, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 0, 42);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+// Cap the pixel ratio: at 60k additive points a 2x retina buffer is pure
+// overdraw and costs far more than it shows.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+document.getElementById("scene").appendChild(renderer.domElement);
+
+// --- geometry: an evenly covered sphere -------------------------------------
+// Fibonacci spiral rather than random spherical coordinates, which clump hard
+// at the poles and look blotchy at this density.
+const geo = new THREE.BufferGeometry();
+const pos = new Float32Array(COUNT * 3);
+const rnd = new Float32Array(COUNT);       // per-particle phase, kills uniformity
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+for (let i = 0; i < COUNT; i++) {
+  const y = 1 - (i / (COUNT - 1)) * 2;
+  const r = Math.sqrt(Math.max(0, 1 - y * y));
+  const th = GOLDEN * i;
+  pos[i*3]   = Math.cos(th) * r;
+  pos[i*3+1] = y;
+  pos[i*3+2] = Math.sin(th) * r;
+  rnd[i] = Math.random();
+}
+geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+geo.setAttribute("aRand", new THREE.BufferAttribute(rnd, 1));
+
+const uniforms = {
+  uTime:    { value: 0 },
+  uRadius:  { value: RADIUS },
+  uLevel:   { value: 0 },                       // speaking loudness 0..1
+  uPointer: { value: new THREE.Vector3(999, 0, 0) },
+  uPush:    { value: 0 },                       // pointer influence 0..1
+  uColor:   { value: new THREE.Vector3(...COLORS.Booting) },
+  uSize:    { value: Math.min(window.devicePixelRatio, 1.75) * 0.85 },
+};
+
+const vert = `
+uniform float uTime, uRadius, uLevel, uPush, uSize;
+uniform vec3 uPointer;
+attribute float aRand;
+varying float vGlow;
+
+// Cheap value noise. A full simplex implementation is overkill here - these
+// particles only need to breathe, not look like terrain.
+float hash(vec3 p) {
+  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+float noise(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float n = mix(
+    mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+        mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+        mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+  return n * 2.0 - 1.0;
 }
 
-// --- noise bitmaps ----------------------------------------------------------
-// Four 256px greyscale bitmaps at different block sizes. Big blocks read as a
-// low-res compressed feed, fine blocks as sensor noise. One is regenerated
-// every ~120ms so feeds flicker without any per-frame pixel work.
-const NOISE = [];
-const BLOCKS = [2, 4, 8, 14];
-const NSZ = 256;
-function makeNoise(block) {
-  const c = document.createElement("canvas");
-  c.width = NSZ; c.height = NSZ;
-  const g = c.getContext("2d");
-  const img = g.createImageData(NSZ, NSZ);
-  const d = img.data;
-  for (let y = 0; y < NSZ; y += block) {
-    for (let x = 0; x < NSZ; x += block) {
-      const v = 18 + Math.random() * 70 + (Math.random() < 0.06 ? 90 : 0);
-      for (let yy = 0; yy < block && y + yy < NSZ; yy++) {
-        for (let xx = 0; xx < block && x + xx < NSZ; xx++) {
-          const i = ((y + yy) * NSZ + (x + xx)) * 4;
-          d[i] = v * 0.86; d[i+1] = v * 0.94; d[i+2] = v; d[i+3] = 255;
-        }
-      }
-    }
-  }
-  g.putImageData(img, 0, 0);
-  return c;
+void main() {
+  vec3 dir = normalize(position);
+
+  // Idle: two octaves drifting at different rates, so the resting surface
+  // undulates instead of sitting as a perfect sphere. The second octave is
+  // what stops the first from reading as a single slow wobble.
+  float breathe = noise(dir * 2.4 + uTime * 0.15) * 0.85
+                + noise(dir * 5.2 - uTime * 0.09) * 0.38;
+
+  // Voice: a faster, tighter ripple scaled by how loud Ghost currently is.
+  // Driven by real playback amplitude, so the surface tracks the actual words.
+  // Kept moderate on purpose: at higher amplitudes the noise term stops
+  // reading as a sphere pulsing and starts reading as a blob.
+  float voice = noise(dir * 4.2 + uTime * 1.5) * uLevel * 1.35
+              + uLevel * 0.75;
+
+  float r = uRadius + breathe + voice;
+  vec3 p = dir * r;
+
+  // Pointer repulsion - the visible "you are touching it" effect.
+  // Falls off with angular distance so the whole surface shifts subtly while
+  // the area under the cursor blows out, like the reference image.
+  // Tighter falloff and a much smaller push than feels right on paper: the
+  // displacement, the scatter, the point size and the glow all scale with
+  // infl, so they compound and it blows out fast.
+  float d = distance(normalize(uPointer), dir);
+  float infl = smoothstep(0.45, 0.0, d) * uPush;
+  p += dir * infl * 1.1;
+  // Slight lateral scatter so displaced particles spray rather than slide.
+  p += vec3(noise(dir * 9.0 + uTime), noise(dir * 9.0 - uTime),
+            noise(dir * 9.0 + 4.0)) * infl * 0.35;
+
+  vGlow = infl * 0.22 + uLevel * 0.55 + aRand * 0.12;
+
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  // Perspective-correct sizing, plus a nudge for excited particles.
+  gl_PointSize = uSize * (300.0 / -mv.z) * (0.55 + aRand * 0.5 + infl * 0.22);
 }
-for (const b of BLOCKS) NOISE.push(makeNoise(b));
-let noiseTick = 0;
+`;
 
-// --- tiles ------------------------------------------------------------------
-// The screen is a coarse grid of cells. Tiles occupy 1..3 x 1..2 cells and
-// never overlap; a reserved region on the right is left for the globe and
-// readout. Each tile lives a few seconds, fades out, and is replaced
-// somewhere else, so the mosaic keeps re-fragmenting.
-const CELL = 128, GAP = 10;
-let cols = 0, rows = 0, occ = [];
-let tiles = [];
-let reserve = { c0: 0, c1: 0, r0: 0, r1: 0 };   // globe + readout cells
-let idCounter = 1000;
-
-function layout() {
-  cols = Math.max(4, Math.floor((W - 60) / CELL));
-  rows = Math.max(3, Math.floor((H - 110) / CELL));
-  // Right third, vertically centred, for the globe and the readout.
-  const rc = Math.max(2, Math.round(cols * 0.34));
-  const rr = Math.max(2, Math.min(rows, Math.round(rows * 0.7)));
-  reserve = { c0: cols - rc, c1: cols, r0: Math.floor((rows - rr) / 2),
-              r1: Math.floor((rows - rr) / 2) + rr };
-  occ = Array.from({ length: rows }, () => new Array(cols).fill(false));
-  tiles = [];
-  for (let i = 0; i < cols * rows * 0.55; i++) spawnTile(true);
+const frag = `
+uniform vec3 uColor;
+varying float vGlow;
+void main() {
+  // Round, soft-edged point drawn analytically - no sprite texture to upload,
+  // and it stays crisp at any point size.
+  vec2 c = gl_PointCoord - 0.5;
+  float d = dot(c, c);
+  if (d > 0.25) discard;
+  float a = smoothstep(0.25, 0.0, d);
+  vec3 col = mix(uColor, vec3(1.0), clamp(vGlow * 0.55, 0.0, 0.7));
+  // Deliberately faint. These are additively blended and thousands overlap on
+  // the front face - anything above ~0.1 base alpha accumulates into a solid
+  // white disc and the individual particles disappear.
+  gl_FragColor = vec4(col, a * (0.30 + vGlow * 0.55));
 }
+`;
 
-function originX() { return (W - cols * CELL) / 2; }
-function originY() { return (H - rows * CELL) / 2 + 8; }
-
-function free(c, r, w, h) {
-  if (c + w > cols || r + h > rows) return false;
-  for (let y = r; y < r + h; y++)
-    for (let x = c; x < c + w; x++) {
-      if (occ[y][x]) return false;
-      if (x >= reserve.c0 && x < reserve.c1 && y >= reserve.r0 && y < reserve.r1) return false;
-    }
-  return true;
-}
-function mark(t, v) {
-  for (let y = t.r; y < t.r + t.h; y++)
-    for (let x = t.c; x < t.c + t.w; x++) occ[y][x] = v;
-}
-
-const KINDS = ["feed", "feed", "city", "city", "data", "map"];
-function spawnTile(initial) {
-  for (let tries = 0; tries < 40; tries++) {
-    const w = Math.random() < 0.55 ? 1 : (Math.random() < 0.7 ? 2 : 3);
-    const h = Math.random() < 0.65 ? 1 : 2;
-    const c = Math.floor(Math.random() * cols), r = Math.floor(Math.random() * rows);
-    if (!free(c, r, w, h)) continue;
-    const t = {
-      c, r, w, h, kind: KINDS[Math.floor(Math.random() * KINDS.length)],
-      noise: Math.floor(Math.random() * NOISE.length),
-      ox: Math.random() * NSZ, oy: Math.random() * NSZ,
-      drift: (Math.random() - 0.5) * 6,
-      id: "CAM " + (idCounter++),
-      lat: (Math.random() * 140 - 70), lon: (Math.random() * 360 - 180),
-      age: initial ? Math.random() * 6 : 0,
-      life: 5 + Math.random() * 9,
-      glitch: 0, sliceY: Math.random(), blob: Math.random(),
-      rows: Array.from({ length: 6 }, () => hexRow()),
-      // Skyline for city tiles: building widths and heights as fractions.
-      bld: Array.from({ length: 14 }, () => [0.04 + Math.random() * 0.1, 0.25 + Math.random() * 0.65]),
-    };
-    mark(t, true);
-    tiles.push(t);
-    return;
-  }
-}
-function hexRow() {
-  let s = "";
-  for (let i = 0; i < 4; i++) s += Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0").toUpperCase() + " ";
-  return s.trim();
-}
-
-function tileRect(t) {
-  return { x: originX() + t.c * CELL + GAP / 2, y: originY() + t.r * CELL + GAP / 2,
-           w: t.w * CELL - GAP, h: t.h * CELL - GAP };
-}
-
-function drawBrackets(x, y, w, h, len, color, lw) {
-  ctx.strokeStyle = color; ctx.lineWidth = lw;
-  ctx.beginPath();
-  ctx.moveTo(x, y + len); ctx.lineTo(x, y); ctx.lineTo(x + len, y);
-  ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
-  ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
-  ctx.moveTo(x + w - len, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - len);
-  ctx.stroke();
-}
-
-function drawTile(t, time, level, accent) {
-  const { x, y, w, h } = tileRect(t);
-  // Fade in over the first 0.6 s and out over the last 0.8 s of its life.
-  const a = Math.min(1, t.age / 0.6, (t.life - t.age) / 0.8);
-  if (a <= 0) return;
-  ctx.save();
-  ctx.globalAlpha = a;
-  ctx.fillStyle = "#070a10";
-  ctx.fillRect(x, y, w, h);
-  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-
-  if (t.kind === "feed") {
-    // Noise bitmap, tiled, slowly panning. Glitch pushes one horizontal slice
-    // sideways for a frame or two, the classic broken-feed tear.
-    const n = NOISE[t.noise];
-    const ox = (t.ox + time * t.drift) % NSZ, oy = t.oy % NSZ;
-    ctx.globalAlpha = a * 0.55;
-    for (let yy = -NSZ; yy < h + NSZ; yy += NSZ)
-      for (let xx = -NSZ; xx < w + NSZ; xx += NSZ)
-        ctx.drawImage(n, x + xx - ox, y + yy - oy);
-    // A darker drifting shape so the feed has "something" moving in it.
-    const bx = x + ((t.blob * 3 + time * 0.05) % 1.2 - 0.1) * w;
-    const g = ctx.createRadialGradient(bx, y + h * 0.55, 2, bx, y + h * 0.55, h * 0.6);
-    g.addColorStop(0, "rgba(0,0,0,0.75)"); g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
-    if (t.glitch > 0) {
-      const sy = y + t.sliceY * h, sh = 6 + Math.random() * 14;
-      ctx.drawImage(n, 0, 0, NSZ, sh, x + (Math.random() - 0.5) * 40, sy, w, sh);
-    }
-    // Scanlines.
-    ctx.globalAlpha = a * 0.28;
-    ctx.fillStyle = "#000";
-    for (let sy = 0; sy < h; sy += 3) ctx.fillRect(x, y + sy, w, 1);
-    // Sweep line.
-    const sw = ((time * 40 + t.blob * 500) % (h + 40)) - 20;
-    ctx.globalAlpha = a * 0.25; ctx.fillStyle = accent;
-    ctx.fillRect(x, y + sw, w, 1);
-    ctx.globalAlpha = a;
-    // Small red lock box that pulses with the voice.
-    if (t.w >= 2 || t.blob > 0.5) {
-      const bw = 18 + level * 8, cx = x + w * (0.3 + t.blob * 0.4), cy = y + h * 0.5;
-      drawBrackets(cx - bw / 2, cy - bw / 2, bw, bw, 5, RED, 1);
-      ctx.fillStyle = RED; ctx.fillRect(cx - 1, cy - 1, 2, 2);
-    }
-  } else if (t.kind === "city") {
-    // Night skyline seen through a noisy feed: haze, blocks, lit windows.
-    const n = NOISE[t.noise];
-    ctx.globalAlpha = a * 0.28;
-    ctx.drawImage(n, x - (t.ox + time * t.drift) % NSZ, y - t.oy % NSZ, NSZ * 3, NSZ * 3);
-    ctx.globalAlpha = a;
-    const sky = ctx.createLinearGradient(0, y, 0, y + h);
-    sky.addColorStop(0, "rgba(30,40,60,0.0)"); sky.addColorStop(1, "rgba(60,75,100,0.35)");
-    ctx.fillStyle = sky; ctx.fillRect(x, y, w, h);
-    let bx = x - 4;
-    for (const [bw, bh] of t.bld) {
-      const ww = bw * w * 1.6, hh = bh * h * 0.8;
-      ctx.fillStyle = "rgba(8,11,16,0.92)";
-      ctx.fillRect(bx, y + h - hh, ww, hh);
-      ctx.fillStyle = "rgba(200,215,240,0.55)";
-      for (let wy = y + h - hh + 6; wy < y + h - 4; wy += 7)
-        for (let wx = bx + 3; wx < bx + ww - 3; wx += 6)
-          if (((wx * 7 + wy * 13 + (t.blob * 100) | 0) % 5) < 2) ctx.fillRect(wx, wy, 2, 2);
-      bx += ww + 2;
-      if (bx > x + w) break;
-    }
-    if (t.glitch > 0) {
-      const sy = y + t.sliceY * h, sh = 6 + Math.random() * 14;
-      ctx.drawImage(n, 0, 0, NSZ, sh, x + (Math.random() - 0.5) * 40, sy, w, sh);
-    }
-    ctx.globalAlpha = a * 0.28; ctx.fillStyle = "#000";
-    for (let sy = 0; sy < h; sy += 3) ctx.fillRect(x, y + sy, w, 1);
-    ctx.globalAlpha = a;
-    const bw2 = 16 + level * 8, cx2 = x + w * (0.25 + t.blob * 0.5), cy2 = y + h * 0.62;
-    drawBrackets(cx2 - bw2 / 2, cy2 - bw2 / 2, bw2, bw2, 4, RED, 1);
-  } else if (t.kind === "data") {
-    // Columns of hex that roll, with a highlighted row.
-    ctx.font = "9px Consolas, monospace"; ctx.textBaseline = "top";
-    const lineH = 12, n = Math.floor((h - 20) / lineH);
-    const roll = Math.floor(time * 4 + t.blob * 10);
-    for (let i = 0; i < n; i++) {
-      const row = t.rows[(i + roll) % t.rows.length];
-      ctx.fillStyle = (i + roll) % 7 === 0 ? accent : DIM;
-      ctx.fillText(row, x + 8, y + 18 + i * lineH);
-    }
-    if (Math.random() < 0.15) t.rows[Math.floor(Math.random() * t.rows.length)] = hexRow();
-    ctx.fillStyle = DIM; ctx.fillRect(x + 8, y + h - 14, (w - 16) * ((time * 0.3 + t.blob) % 1), 2);
-  } else {
-    // Mini map: dot grid with a moving blip and range rings.
-    ctx.fillStyle = "#2a3140";
-    for (let yy = 8; yy < h; yy += 8) for (let xx = 8; xx < w; xx += 8) ctx.fillRect(x + xx, y + yy, 1, 1);
-    const cx = x + w / 2, cy = y + h / 2, r = Math.min(w, h) * 0.38;
-    ctx.strokeStyle = "rgba(140,160,190,0.25)"; ctx.lineWidth = 1;
-    for (const k of [0.4, 0.7, 1]) { ctx.beginPath(); ctx.arc(cx, cy, r * k, 0, Math.PI * 2); ctx.stroke(); }
-    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
-    const ang = time * 0.9 + t.blob * 6;
-    ctx.strokeStyle = accent; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r); ctx.stroke();
-    const bx = cx + Math.cos(t.blob * 9 + time * 0.2) * r * 0.6, by = cy + Math.sin(t.blob * 9 + time * 0.2) * r * 0.6;
-    ctx.fillStyle = RED; ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
-  }
-
-  // Frame, label, coordinates.
-  ctx.globalAlpha = a;
-  ctx.strokeStyle = "rgba(150,165,190,0.22)"; ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-  drawBrackets(x + 0.5, y + 0.5, w - 1, h - 1, 7, "rgba(200,210,230,0.55)", 1);
-  ctx.font = "8px Consolas, monospace"; ctx.textBaseline = "top";
-  ctx.fillStyle = TEXT; ctx.fillText(t.id, x + 6, y + 5);
-  ctx.fillStyle = DIM;
-  ctx.fillText("LOC " + Math.abs(t.lat).toFixed(0) + (t.lat < 0 ? "S" : "N") +
-               "  LONG " + Math.abs(t.lon).toFixed(0) + (t.lon < 0 ? "W" : "E"), x + 6, y + h - 12);
-  if ((t.kind === "feed" || t.kind === "city") && Math.floor(time * 2 + t.blob * 4) % 2 === 0) {
-    ctx.fillStyle = RED; ctx.fillRect(x + w - 12, y + 6, 4, 4);
-    ctx.fillStyle = TEXT; ctx.textAlign = "right"; ctx.fillText("REC", x + w - 16, y + 5); ctx.textAlign = "left";
-  }
-  ctx.restore();
-}
-
-// --- globe ------------------------------------------------------------------
-// Orthographic wireframe. Lat/long rings only, no coastlines: this is set
-// dressing behind the readout, and coastline data would triple the file.
-function drawGlobe(cx, cy, R, time, level, accent) {
-  const rot = time * 0.25;
-  const tilt = 0.35;
-  const proj = (lat, lon) => {
-    const x0 = Math.cos(lat) * Math.cos(lon + rot), y0 = Math.sin(lat), z0 = Math.cos(lat) * Math.sin(lon + rot);
-    const y1 = y0 * Math.cos(tilt) - z0 * Math.sin(tilt), z1 = y0 * Math.sin(tilt) + z0 * Math.cos(tilt);
-    return { x: cx + x0 * R, y: cy - y1 * R, z: z1 };
-  };
-  ctx.save();
-  ctx.lineWidth = 1;
-  // Glow disc.
-  const g = ctx.createRadialGradient(cx, cy, R * 0.6, cx, cy, R * 1.25);
-  g.addColorStop(0, "rgba(40,60,90,0.18)"); g.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = g; ctx.fillRect(cx - R * 1.3, cy - R * 1.3, R * 2.6, R * 2.6);
-  // Rings, front hemisphere brighter than back.
-  const seg = 48;
-  const line = (pts) => {
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1], b = pts[i];
-      const front = (a.z + b.z) * 0.5 > 0;
-      ctx.strokeStyle = front ? "rgba(160,185,220,0.45)" : "rgba(90,110,140,0.12)";
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    }
-  };
-  for (let la = -60; la <= 60; la += 30) {
-    const pts = []; const lat = la * Math.PI / 180;
-    for (let i = 0; i <= seg; i++) pts.push(proj(lat, i / seg * Math.PI * 2));
-    line(pts);
-  }
-  for (let lo = 0; lo < 180; lo += 30) {
-    const pts = []; const lon = lo * Math.PI / 180;
-    for (let i = 0; i <= seg; i++) pts.push(proj(-Math.PI / 2 + i / seg * Math.PI, lon));
-    line(pts);
-  }
-  ctx.strokeStyle = "rgba(180,200,230,0.5)";
-  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
-  // Contacts: a fixed set of points that orbit with the globe, one flagged.
-  for (let i = 0; i < 14; i++) {
-    const p = proj((i * 0.71 % 1.2) - 0.6, i * 1.9);
-    if (p.z < 0) continue;
-    ctx.fillStyle = i === 3 ? RED : accent;
-    ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
-    if (i === 3) {
-      const s = 8 + level * 10;
-      ctx.strokeStyle = RED; ctx.beginPath(); ctx.arc(p.x, p.y, s, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(p.x + s, p.y); ctx.lineTo(p.x + s + 22, p.y - 18); ctx.lineTo(p.x + s + 60, p.y - 18); ctx.stroke();
-      ctx.font = "8px Consolas, monospace"; ctx.fillStyle = TEXT; ctx.textBaseline = "bottom";
-      ctx.fillText("TARGET LOCK", p.x + s + 24, p.y - 20);
-    }
-  }
-  // Orbit ring, tilted, like the satellite track in the film frame.
-  ctx.strokeStyle = "rgba(255,80,80,0.35)";
-  ctx.beginPath(); ctx.ellipse(cx, cy, R * 1.18, R * 0.32, -0.5, 0, Math.PI * 2); ctx.stroke();
-  ctx.restore();
-}
-
-// --- readout ----------------------------------------------------------------
-let stateWord = "Booting", stateDetail = "";
-let waveform = new Array(48).fill(0);
-
-function drawReadout(x, y, w, time, level, accent) {
-  ctx.save();
-  ctx.font = "9px Consolas, monospace"; ctx.textBaseline = "top";
-  ctx.fillStyle = DIM; ctx.fillText("BUILDING PROFILE", x, y);
-  ctx.fillStyle = "rgba(150,165,190,0.35)"; ctx.fillRect(x, y + 13, w, 1);
-  ctx.font = "bold 13px Consolas, monospace"; ctx.fillStyle = accent;
-  ctx.fillText(stateWord.toUpperCase(), x, y + 22);
-  ctx.font = "8px Consolas, monospace"; ctx.fillStyle = DIM;
-  ctx.fillText("PROCESSING DATA", x + 110, y + 26);
-  const rowsOut = [
-    ["TIME", new Date().toISOString().slice(11, 19) + "Z"],
-    ["STATUS", stateWord.toUpperCase()],
-    ["AUDIO MATCH", (60 + level * 39).toFixed(1) + "%"],
-    ["DETAIL", (stateDetail || "--").toUpperCase().slice(0, 34)],
-    ["OUTPUT", level > 0.05 ? "VOICE / ACTIVE" : "STANDBY"],
-  ];
-  let yy = y + 46;
-  for (const [k, v] of rowsOut) {
-    ctx.fillStyle = DIM; ctx.fillText(k + ":", x, yy);
-    ctx.fillStyle = TEXT; ctx.fillText(v, x + 78, yy);
-    yy += 13;
-  }
-  // Waveform bars from the voice level history.
-  const bw = w / waveform.length;
-  for (let i = 0; i < waveform.length; i++) {
-    const hgt = 2 + waveform[i] * 26;
-    ctx.fillStyle = i === waveform.length - 1 ? accent : "rgba(150,165,190,0.45)";
-    ctx.fillRect(x + i * bw, yy + 30 - hgt, Math.max(1, bw - 1.5), hgt);
-  }
-  ctx.fillStyle = "rgba(150,165,190,0.35)"; ctx.fillRect(x, yy + 32, w, 1);
-  ctx.restore();
-}
-
-// --- reticles ---------------------------------------------------------------
-// Three drifting locks and one that follows the pointer. Each drifting one
-// picks a new target every few seconds and eases toward it.
-const reticles = Array.from({ length: 3 }, () => ({
-  x: Math.random() * 800, y: Math.random() * 600, tx: 0, ty: 0, next: 0,
-}));
-const pointer = { x: -999, y: -999, active: false };
-window.addEventListener("pointermove", (e) => { pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true; });
-window.addEventListener("pointerleave", () => { pointer.active = false; });
-
-function drawReticle(x, y, r, time, label, color) {
-  ctx.save();
-  ctx.strokeStyle = color; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath();
-  for (let i = 0; i < 4; i++) {
-    const a = time * 0.8 + i * Math.PI / 2;
-    ctx.moveTo(x + Math.cos(a) * (r + 3), y + Math.sin(a) * (r + 3));
-    ctx.lineTo(x + Math.cos(a) * (r + 9), y + Math.sin(a) * (r + 9));
-  }
-  ctx.stroke();
-  ctx.fillStyle = color; ctx.fillRect(x - 1, y - 1, 2, 2);
-  if (label) {
-    ctx.font = "8px Consolas, monospace"; ctx.textBaseline = "middle"; ctx.fillStyle = color;
-    ctx.fillText(label, x + r + 12, y);
-  }
-  ctx.restore();
-}
+const mat = new THREE.ShaderMaterial({
+  uniforms, vertexShader: vert, fragmentShader: frag,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const sphere = new THREE.Points(geo, mat);
+scene.add(sphere);
 
 // --- inputs from Python ------------------------------------------------------
+let targetColor = COLORS.Booting.slice();
 window.updateGhostState = function (word, detail) {
-  stateWord = word; stateDetail = detail || "";
-  const hex = ACCENT[word] || ACCENT.Booting;
+  targetColor = (COLORS[word] || COLORS.Booting).slice();
   document.getElementById("word").textContent = word;
-  document.getElementById("detail").textContent = stateDetail;
+  document.getElementById("detail").textContent = detail || "";
+  const hex = "#" + targetColor.map(
+    v => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
   const dot = document.getElementById("dot");
-  dot.style.background = hex; dot.style.color = hex;
-  document.getElementById("tl-sub").textContent =
-    word === "Offline" ? "feeds lost" : word === "Booting" ? "acquiring feeds" : "feeds live";
+  dot.style.background = hex;
+  dot.style.color = hex;
 };
+
+// Called ~25 times a second while Ghost speaks. Smoothed here rather than in
+// Python so the surface never steps between updates.
 let levelTarget = 0;
-window.ghostLevel = function (v) { levelTarget = Math.max(0, Math.min(1, v || 0)); };
+window.ghostLevel = function (v) {
+  levelTarget = Math.max(0, Math.min(1, v || 0));
+};
+
+// --- pointer ----------------------------------------------------------------
+// Tracked as a direction on the sphere, so the effect follows the cursor even
+// when it is off the sphere entirely.
+const ndc = new THREE.Vector2(0, 0);
+let pushTarget = 0;
+window.addEventListener("pointermove", (e) => {
+  ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  pushTarget = 1;
+});
+window.addEventListener("pointerleave", () => { pushTarget = 0; });
+
+const ray = new THREE.Raycaster();
+const pointerDir = new THREE.Vector3(0, 0, 1);
+const tmp = new THREE.Vector3();
 
 // --- loop -------------------------------------------------------------------
-let last = performance.now(), time = 0, level = 0, waveTick = 0;
+const clock = new THREE.Clock();
+let level = 0, push = 0;
 
-function frame(now) {
-  requestAnimationFrame(frame);
-  const dt = Math.min((now - last) / 1000, 0.05); last = now; time += dt;
-  const accent = ACCENT[stateWord] || ACCENT.Booting;
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  uniforms.uTime.value += dt;
 
-  // Asymmetric smoothing: snap up on a syllable, fall away slowly.
-  level += (levelTarget - level) * Math.min(1, dt * (levelTarget > level ? 14 : 4));
-  levelTarget *= 0.92;
-  waveTick += dt;
-  if (waveTick > 0.05) { waveTick = 0; waveform.push(level); waveform.shift(); }
+  // Asymmetric smoothing: snap up on a syllable, fall away slowly. Equal rates
+  // in both directions read as mushy and lag the voice.
+  const rate = levelTarget > level ? 14 : 4;
+  level += (levelTarget - level) * Math.min(1, dt * rate);
+  uniforms.uLevel.value = level;
+  levelTarget *= 0.92;      // decay if Python stops sending (silence)
 
-  noiseTick += dt;
-  if (noiseTick > 0.12) {
-    noiseTick = 0;
-    const i = Math.floor(Math.random() * NOISE.length);
-    NOISE[i] = makeNoise(BLOCKS[i]);
-  }
+  push += (pushTarget - push) * Math.min(1, dt * 6);
+  uniforms.uPush.value = push;
 
-  // Background: near-black with a faint pixel grid.
-  ctx.fillStyle = "#04060b"; ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = "rgba(120,140,170,0.06)"; ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = originX() % 32; x < W; x += 32) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); }
-  for (let y = originY() % 32; y < H; y += 32) { ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); }
-  ctx.stroke();
-  // Scattered pixel blocks, more of them the louder Ghost is.
-  const blocks = 12 + Math.floor(level * 60);
-  for (let i = 0; i < blocks; i++) {
-    ctx.fillStyle = "rgba(150,170,200," + (0.04 + Math.random() * 0.08).toFixed(3) + ")";
-    ctx.fillRect(Math.floor(Math.random() * W / 8) * 8, Math.floor(Math.random() * H / 8) * 8, 8, 8);
-  }
+  // Project the cursor onto the sphere's direction space.
+  ray.setFromCamera(ndc, camera);
+  tmp.copy(ray.ray.direction).multiplyScalar(40).add(ray.ray.origin);
+  pointerDir.lerp(tmp.normalize(), Math.min(1, dt * 9));
+  uniforms.uPointer.value.copy(pointerDir);
 
-  // Tiles: age, glitch, retire, respawn. Louder means shorter lives and more
-  // tears, which is what turns the orderly grid into a data storm.
-  const churn = 1 + level * 3;
-  for (const t of tiles) {
-    t.age += dt * churn;
-    if (t.glitch > 0) t.glitch -= dt;
-    else if (Math.random() < dt * (0.15 + level * 3)) { t.glitch = 0.08; t.sliceY = Math.random(); }
-  }
-  for (let i = tiles.length - 1; i >= 0; i--) {
-    if (tiles[i].age >= tiles[i].life) { mark(tiles[i], false); tiles.splice(i, 1); spawnTile(false); }
-  }
-  for (const t of tiles) drawTile(t, time, level, accent);
+  // Colour eased rather than snapped, so state changes feel like a mood shift.
+  const c = uniforms.uColor.value;
+  c.x += (targetColor[0] - c.x) * Math.min(1, dt * 2.5);
+  c.y += (targetColor[1] - c.y) * Math.min(1, dt * 2.5);
+  c.z += (targetColor[2] - c.z) * Math.min(1, dt * 2.5);
 
-  // Globe and readout in the reserved region.
-  const rx = originX() + reserve.c0 * CELL, ry = originY() + reserve.r0 * CELL;
-  const rw = (reserve.c1 - reserve.c0) * CELL, rh = (reserve.r1 - reserve.r0) * CELL;
-  // Globe hugs the right edge with room for its lock label; the readout takes
-  // whatever is left to its west, so neither overlaps the other.
-  const R = Math.min(rw, rh) * 0.30;
-  const gx = Math.min(rx + rw * 0.66, W - R - 110), gy = ry + rh * 0.42;
-  drawGlobe(gx, gy, R, time, level, accent);
-  drawReadout(rx + 8, gy - 60, Math.max(120, gx - R * 1.2 - rx - 20), time, level, accent);
+  sphere.rotation.y += dt * 0.045;
+  sphere.rotation.x = Math.sin(uniforms.uTime.value * 0.13) * 0.14;
 
-  // Reticles.
-  for (const r of reticles) {
-    if (time > r.next) { r.tx = 40 + Math.random() * (W - 80); r.ty = 60 + Math.random() * (H - 140); r.next = time + 3 + Math.random() * 5; }
-    r.x += (r.tx - r.x) * Math.min(1, dt * 1.6); r.y += (r.ty - r.y) * Math.min(1, dt * 1.6);
-    const moving = Math.hypot(r.tx - r.x, r.ty - r.y) > 3;
-    drawReticle(r.x, r.y, 10 + level * 6, time, moving ? "ACQUIRING" : "LOCKED", moving ? "rgba(255,120,120,0.6)" : RED);
-  }
-  if (pointer.active) {
-    drawReticle(pointer.x, pointer.y, 16 + level * 8, time * 2, "TRACKING", accent);
-    ctx.strokeStyle = "rgba(255,255,255,0.12)";
-    ctx.beginPath(); ctx.moveTo(0, pointer.y + 0.5); ctx.lineTo(W, pointer.y + 0.5);
-    ctx.moveTo(pointer.x + 0.5, 0); ctx.lineTo(pointer.x + 0.5, H); ctx.stroke();
-  }
-
-  if (Math.floor(time * 2) !== Math.floor((time - dt) * 2))
-    document.getElementById("clock").textContent = new Date().toISOString().slice(11, 19);
+  renderer.render(scene, camera);
 }
+animate();
 
-window.addEventListener("resize", resize);
-resize();
-requestAnimationFrame(frame);
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
 </script>
 </body>
 </html>

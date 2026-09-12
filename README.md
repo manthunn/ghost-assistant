@@ -87,7 +87,7 @@ ghost-assistant/
 │   ├── clock.py         # time-of-day awareness for the system prompt
 │   ├── alarm_runner.py  # detached one-shot alerter, outlives Ghost closing
 │   ├── ui3d.py          # pywebview window
-│   ├── webui/           # God's Eye style surveillance grid that reacts to Ghost's voice
+│   ├── webui/           # WebGL particle sphere that reacts to Ghost's voice
 │   └── skills/          # 22 auto-loaded modules, 60 registered tools
 ├── docs/TRIED_AND_SHELVED.md
 └── .env                 # keys — never committed
@@ -106,7 +106,7 @@ mic ──▶ Gemini Live session (single bidirectional socket)
        skills engine ──▶ tool result ──▶ back into the same session
              │
              ▼
-       audio out  +  feed grid glitches with output amplitude
+       audio out  +  particle sphere reacts to output amplitude
 ```
 
 ## Getting started
