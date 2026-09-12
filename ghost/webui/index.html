@@ -136,6 +136,9 @@
 // 720x360 bit image derived from the Natural Earth II tiles that ship with
 // Cesium, baked in as base64 so the face renders offline and instantly.
 //
+// The globe can be dragged to turn it and zoomed with the wheel; after a few
+// idle seconds it resumes its slow drift.
+//
 // Inputs from Python (ui3d.py):
 //   window.updateGhostState(word, detail)   - state name, drives colour
 //   window.ghostLevel(v)                    - 0..1 speaking loudness, ~25Hz
@@ -235,8 +238,6 @@ const uniforms = {
   uTime:    { value: 0 },
   uRadius:  { value: RADIUS },
   uLevel:   { value: 0 },
-  uPointer: { value: new THREE.Vector3(999, 0, 0) },
-  uPush:    { value: 0 },
   uColor:   { value: new THREE.Vector3(...ACCENT.Booting) },
   uSize:    { value: Math.min(devicePixelRatio, 1.75) },
   uScan:    { value: 0 },      // longitude (radians, local frame) of the scan plane
@@ -244,8 +245,7 @@ const uniforms = {
 };
 
 const vert = `
-uniform float uTime, uRadius, uLevel, uPush, uSize, uScan, uBoot;
-uniform vec3 uPointer;
+uniform float uTime, uRadius, uLevel, uSize, uScan, uBoot;
 attribute float aLand, aRand;
 varying float vGlow, vLand, vScan, vAlpha;
 float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
@@ -257,29 +257,24 @@ float noise(vec3 p) {
 }
 void main() {
   vec3 dir = normalize(position);
-  // Boot: points fly in from a scattered shell and settle onto the surface,
-  // land first (it reads as "coastlines resolving").
+  // Boot: points fade in where they belong, land first, so the coastlines
+  // resolve out of the dark. No scatter: the globe never comes apart.
   float order = aRand * 0.6 + (1.0 - aLand) * 0.4;
   float settle = smoothstep(order, order + 0.25, uBoot);
   float breathe = noise(dir * 2.4 + uTime * 0.15) * 0.10;
   float voice = (noise(dir * 4.2 + uTime * 1.5) * 0.9 + 0.5) * uLevel * 0.9;
-  float r = uRadius + breathe + voice + (1.0 - settle) * (6.0 + aRand * 14.0);
-  vec3 p = dir * r;
-  float d = distance(normalize(uPointer), dir);
-  float infl = smoothstep(0.42, 0.0, d) * uPush;
-  p += dir * infl * 1.2;
-  p += vec3(noise(dir * 9.0 + uTime), noise(dir * 9.0 - uTime), noise(dir * 9.0 + 4.0)) * infl * 0.3;
+  vec3 p = dir * (uRadius + breathe + voice);
   // Scan plane: a longitude band that sweeps around; points inside it flare.
   float lon = atan(-dir.z, dir.x);
   float dl = abs(mod(lon - uScan + 3.14159, 6.28318) - 3.14159);
   vScan = smoothstep(0.22, 0.0, dl) * (0.6 + aLand * 0.6);
-  vGlow = infl * 0.3 + uLevel * 0.45 + aRand * 0.10 + vScan * 0.8;
+  vGlow = uLevel * 0.45 + aRand * 0.10 + vScan * 0.8;
   vLand = aLand;
   vAlpha = settle;
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
   float base = mix(0.55, 1.0, aLand);
-  gl_PointSize = uSize * (120.0 / -mv.z) * base * (0.7 + aRand * 0.4 + infl * 0.3 + vScan * 0.4) * (0.4 + settle * 0.6);
+  gl_PointSize = uSize * (120.0 / -mv.z) * base * (0.7 + aRand * 0.4 + vScan * 0.4);
 }`;
 const frag = `
 uniform vec3 uColor;
@@ -467,14 +462,36 @@ function projectTarget(t) {
   t.x = (_w.x + 1) / 2 * innerWidth; t.y = (1 - _w.y) / 2 * innerHeight;
 }
 
-const pointer = { x: -999, y: -999, active: false };
-const ndc = new THREE.Vector2(0, 0);
-let pushTarget = 0;
+// Drag turns the globe, the wheel zooms, and after a few idle seconds the
+// slow drift resumes. Velocity is kept so a flick keeps spinning.
+const pointer = { x: -999, y: -999, active: false, down: false, lx: 0, ly: 0, vx: 0, vy: 0, idle: 0 };
+const DRAG = 0.0045;
+addEventListener("pointerdown", (e) => {
+  pointer.down = true; pointer.lx = e.clientX; pointer.ly = e.clientY; pointer.vx = pointer.vy = 0;
+  yawTarget = tiltTarget = null;
+  document.body.style.cursor = "grabbing";
+});
 addEventListener("pointermove", (e) => {
   pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
-  ndc.x = (e.clientX / innerWidth) * 2 - 1; ndc.y = -(e.clientY / innerHeight) * 2 + 1; pushTarget = 1;
+  if (!pointer.down) return;
+  const dx = e.clientX - pointer.lx, dy = e.clientY - pointer.ly;
+  pointer.lx = e.clientX; pointer.ly = e.clientY;
+  earth.rotation.y += dx * DRAG;
+  earth.rotation.x = Math.max(-1.3, Math.min(1.3, earth.rotation.x + dy * DRAG));
+  // Capped so a flick coasts rather than launches.
+  pointer.vx = Math.max(-0.05, Math.min(0.05, dx * DRAG));
+  pointer.vy = Math.max(-0.05, Math.min(0.05, dy * DRAG));
+  pointer.idle = 0;
 });
-addEventListener("pointerleave", () => { pointer.active = false; pushTarget = 0; });
+const release = () => { pointer.down = false; document.body.style.cursor = "grab"; };
+addEventListener("pointerup", release);
+addEventListener("pointercancel", release);
+addEventListener("pointerleave", () => { pointer.active = false; release(); });
+addEventListener("wheel", (e) => {
+  camera.position.z = Math.max(24, Math.min(80, camera.position.z + e.deltaY * 0.02));
+  pointer.idle = 0;
+}, { passive: true });
+document.body.style.cursor = "grab";
 
 function drawOverlay(t, level, accentHex) {
   octx.clearRect(0, 0, innerWidth, innerHeight);
@@ -506,7 +523,7 @@ function drawOverlay(t, level, accentHex) {
     octx.fillText(Math.abs(tg.lat).toFixed(2) + (tg.lat < 0 ? "S " : "N ") + Math.abs(tg.lon).toFixed(2) + (tg.lon < 0 ? "W" : "E"), lx + dirx * 2, ly + 20);
     octx.globalAlpha = 1;
   }
-  if (pointer.active) {
+  if (pointer.active && !pointer.down) {
     octx.strokeStyle = "rgba(255,255,255,0.10)"; octx.lineWidth = 1;
     octx.beginPath(); octx.moveTo(0, pointer.y + 0.5); octx.lineTo(innerWidth, pointer.y + 0.5);
     octx.moveTo(pointer.x + 0.5, 0); octx.lineTo(pointer.x + 0.5, innerHeight); octx.stroke();
@@ -588,10 +605,8 @@ window.ghostTarget = function (lat, lon, label) {
 };
 
 // --- loop ------------------------------------------------------------------------
-const ray = new THREE.Raycaster();
-const pointerDir = new THREE.Vector3(0, 0, 1), tmp = new THREE.Vector3();
 const clock = new THREE.Clock();
-let level = 0, push = 0, waveTick = 0, logTick = 0, uiTick = 0, arcTick = 0;
+let level = 0, waveTick = 0, logTick = 0, uiTick = 0;
 log("GOD'S EYE ONLINE · BUILDING GLOBE", "hot");
 
 function animate() {
@@ -603,15 +618,6 @@ function animate() {
   const rate = levelTarget > level ? 14 : 4;
   level += (levelTarget - level) * Math.min(1, dt * rate);
   uniforms.uLevel.value = level; levelTarget *= 0.92;
-  push += (pushTarget - push) * Math.min(1, dt * 6); uniforms.uPush.value = push;
-
-  // Pointer direction in the globe's local frame, so repulsion follows the
-  // cursor even as the group rotates.
-  ray.setFromCamera(ndc, camera);
-  tmp.copy(ray.ray.direction).multiplyScalar(44).add(ray.ray.origin);
-  earth.worldToLocal(tmp);
-  pointerDir.lerp(tmp.normalize(), Math.min(1, dt * 9));
-  uniforms.uPointer.value.copy(pointerDir);
 
   const c = uniforms.uColor.value;
   c.x += (targetColor[0] - c.x) * Math.min(1, dt * 2.5);
@@ -619,13 +625,21 @@ function animate() {
   c.z += (targetColor[2] - c.z) * Math.min(1, dt * 2.5);
   const accentHex = hex([c.x, c.y, c.z]);
 
-  // Rotation: slow drift, or ease toward a requested target, then resume.
-  if (yawTarget !== null) {
+  // Rotation: the user's drag wins, then a flick coasts, then a requested
+  // target is eased to, and after four idle seconds the slow drift resumes.
+  pointer.idle += dt;
+  if (pointer.down) {
+    // handled in pointermove
+  } else if (Math.abs(pointer.vx) > 1e-4 || Math.abs(pointer.vy) > 1e-4) {
+    earth.rotation.y += pointer.vx * 30 * dt;
+    earth.rotation.x = Math.max(-1.3, Math.min(1.3, earth.rotation.x + pointer.vy * 30 * dt));
+    const k = Math.exp(-dt * 3.5); pointer.vx *= k; pointer.vy *= k;
+  } else if (yawTarget !== null) {
     let d = yawTarget - earth.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     earth.rotation.y += d * Math.min(1, dt * 2.2);
     if (Math.abs(d) < 0.01) yawTarget = null;
-  } else {
+  } else if (pointer.idle > 4) {
     earth.rotation.y += dt * (stateWord === "Thinking" ? 0.12 : 0.04);
   }
   if (tiltTarget !== null) {
