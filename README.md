@@ -2,7 +2,7 @@
 
 A hands-free assistant for Windows. You talk to it, it talks back, and in between
 it reads your calendar and inbox, drives applications through UI Automation,
-searches the web, and remembers things between sessions. 60 tools across 22 skill
+searches the web, and remembers things between sessions. 62 tools across 23 skill
 modules, auto-discovered at boot.
 
 Built from scratch in Python.
@@ -41,7 +41,7 @@ billing reason.
 | Desktop | `system_control`, `ui_automation`, `vision`, `screenshot`, `session_control` |
 | Comms | `outlook` (read mail, compose drafts), `whatsapp` (read, send, call), `discord_chat` (channels and DMs), `notion` |
 | Time | `calendar_feed` (Google Calendar API), `moodle` (Moodle calendar + dashboard), `briefing`, `timers`, `todo` |
-| Information | `browser`, `ft_news`, `youtube`, `ai_chats` |
+| Information | `browser`, `ft_news`, `youtube`, `ai_chats`, `gods_eye` (live 3D globe: flights, ships, satellites) |
 | Core | `memory`, `agents`, `media`, `self_upgrade` (Ghost writes its own new skills) |
 
 Some things worth calling out:
@@ -62,6 +62,11 @@ Some things worth calling out:
   git worktree and branch. Nothing merges automatically, and it never restarts
   itself: a broken skill in the live tree would stop Ghost importing, and you
   could no longer ask Ghost to fix it.
+- **Flies a live globe.** "Show me Tokyo in night vision with the flights on"
+  opens [God's Eye View](https://github.com/bilawalsidhu/gods-eye-view), a
+  sibling checkout, over that spot. Everything it can show is in the URL hash,
+  so Ghost builds a share link instead of clicking through the page. The Vite
+  server is a detached process for the same reason timers are.
 - **Refuses to guess.** Skills that can't see something say so — a collapsed
   Outlook mailbox, a login-gated page, a calendar that moved — rather than
   reporting an absence they can't actually verify.
