@@ -63,5 +63,21 @@ class GhostUI:
         except Exception:
             pass  # window not up yet or already closed
 
+    def target(self, lat, lon, label=""):
+        """Turn the globe to a place and pin a reticle on it.
+
+        Called by the gods_eye skill so "show me Tokyo" moves Ghost's own face
+        as well as opening the full app. Safe to call before the page is up:
+        a missed target is cosmetic, so it is dropped rather than queued.
+        """
+        if not self._ready:
+            return
+        safe = (label or "")[:40].replace("\\", "\\\\").replace("'", "\\'")
+        try:
+            self.window.evaluate_js(
+                f"window.ghostTarget({float(lat):.4f}, {float(lon):.4f}, '{safe}')")
+        except Exception:
+            pass  # window not up yet or already closed
+
     def run(self):
         webview.start()

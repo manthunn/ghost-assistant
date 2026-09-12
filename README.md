@@ -62,9 +62,15 @@ Some things worth calling out:
   git worktree and branch. Nothing merges automatically, and it never restarts
   itself: a broken skill in the live tree would stop Ghost importing, and you
   could no longer ask Ghost to fix it.
-- **Flies a live globe.** "Show me Tokyo in night vision with the flights on"
-  opens [God's Eye View](https://github.com/bilawalsidhu/gods-eye-view), a
-  sibling checkout, over that spot. Everything it can show is in the URL hash,
+- **Wears the God's Eye.** The face is a point-cloud Earth with real
+  coastlines (a land mask baked from the Natural Earth tiles that ship with
+  Cesium), satellites on orbits, data arcs between cities, target reticles and
+  the Furious 7 readout panels. Speaking makes the surface ripple; thinking
+  speeds the scan. "Show me Tokyo" turns the globe to Tokyo and pins a
+  reticle on it.
+- **Flies a live globe.** The same request also opens
+  [God's Eye View](https://github.com/bilawalsidhu/gods-eye-view), a sibling
+  checkout, over that spot with real flights and ships. Everything it can show is in the URL hash,
   so Ghost builds a share link instead of clicking through the page. The Vite
   server is a detached process for the same reason timers are.
 - **Refuses to guess.** Skills that can't see something say so — a collapsed
@@ -87,7 +93,7 @@ ghost-assistant/
 │   ├── clock.py         # time-of-day awareness for the system prompt
 │   ├── alarm_runner.py  # detached one-shot alerter, outlives Ghost closing
 │   ├── ui3d.py          # pywebview window
-│   ├── webui/           # WebGL particle sphere that reacts to Ghost's voice
+│   ├── webui/           # God's Eye point-cloud Earth that reacts to Ghost's voice
 │   └── skills/          # 22 auto-loaded modules, 60 registered tools
 ├── docs/TRIED_AND_SHELVED.md
 └── .env                 # keys — never committed
@@ -106,7 +112,7 @@ mic ──▶ Gemini Live session (single bidirectional socket)
        skills engine ──▶ tool result ──▶ back into the same session
              │
              ▼
-       audio out  +  particle sphere reacts to output amplitude
+       audio out  +  point-cloud Earth reacts to output amplitude
 ```
 
 ## Getting started

@@ -12,7 +12,7 @@ import asyncio
 import threading
 from ghost import live_voice
 from ghost.ui3d import GhostUI
-from ghost.skills import load_all
+from ghost.skills import load_all, gods_eye
 
 def assistant_loop(ui, stop_event):
     ui.set("🟣 Loading skills...")
@@ -32,5 +32,6 @@ def assistant_loop(ui, stop_event):
 if __name__ == "__main__":
     stop_event = threading.Event()
     ui = GhostUI(on_close=stop_event.set)
+    gods_eye.face_target = ui.target
     threading.Thread(target=assistant_loop, args=(ui, stop_event), daemon=True).start()
     ui.run()

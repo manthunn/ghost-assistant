@@ -4,298 +4,680 @@
 <meta charset="utf-8">
 <title>Ghost</title>
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #04060d; height: 100%; }
-  #scene { position: fixed; inset: 0; }
-  #hud {
-    position: fixed; left: 38px; bottom: 34px; z-index: 10;
-    font-family: 'Consolas', 'SF Mono', monospace; color: #dfe6f5;
-    user-select: none; -webkit-app-region: drag;
+  :root {
+    --text: #c9d3e3; --dim: #5f6a7e; --faint: #333c4c;
+    --accent: #9ec9ff; --orange: #f0a63c; --red: #ff3b3b;
   }
-  #hud .state {
-    font-size: 13px; letter-spacing: 0.34em; text-transform: uppercase;
-    display: flex; align-items: center; gap: 12px; opacity: 0.92;
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #03050a; height: 100%;
+               font-family: 'Consolas', 'SF Mono', monospace; color: var(--text); }
+  canvas { position: fixed; inset: 0; }
+  #scene { z-index: 1; }
+  #overlay { z-index: 6; pointer-events: none; }
+  .panel { position: fixed; z-index: 8; user-select: none; pointer-events: none; }
+  .label { font-size: 9px; letter-spacing: .28em; text-transform: uppercase; color: var(--dim); }
+  .big { font-family: 'Bahnschrift SemiCondensed', 'Bahnschrift', 'Arial Narrow', sans-serif;
+         font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+
+  /* Orange band across the top, the film's "processing" strip. */
+  #band {
+    position: fixed; left: 0; right: 0; top: 0; height: 46px; z-index: 7; pointer-events: none;
+    background: linear-gradient(90deg, rgba(240,110,40,.22), rgba(240,140,60,.10) 55%, rgba(240,110,40,.20));
+    border-bottom: 1px solid rgba(240,150,70,.35);
+    -webkit-app-region: drag;
   }
-  #hud .dot {
-    width: 7px; height: 7px; border-radius: 50%; background: #3ecf6a;
-    box-shadow: 0 0 14px 2px currentColor; color: #3ecf6a;
-    transition: background .5s, color .5s;
+  #band::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 100%;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px);
   }
-  #hud .detail {
-    font-size: 11px; letter-spacing: 0.16em; color: #5d6478;
-    margin-top: 9px; margin-left: 19px; min-height: 13px;
-  }
-  /* Dither, not decoration. A dark radial gradient quantises into visible
-     concentric rings in 8-bit sRGB - there aren't enough distinct values near
-     black to ramp smoothly. Random noise on top breaks the bands up. This
-     replaced 1px scanlines, which also produced moire against the pixel grid
-     under display scaling. */
-  #grain {
-    position: fixed; inset: 0; z-index: 5; pointer-events: none; opacity: .045;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
-  /* Shallower and starting further out than before: the shorter the ramp, the
-     fewer steps there are to band. */
-  #vignette {
-    position: fixed; inset: 0; z-index: 4; pointer-events: none;
-    background: radial-gradient(ellipse at center,
-      rgba(0,0,0,0) 62%, rgba(2,4,10,.45) 100%);
-  }
+  #band-title { left: 30px; top: 12px; font-size: 20px; color: #ffd8b0; text-shadow: 0 0 14px rgba(240,140,60,.6); }
+  #band-title small { font-size: 10px; letter-spacing: .3em; color: #f0a63c; margin-left: 18px; vertical-align: middle; }
+  #band-right { right: 30px; top: 11px; text-align: right; font-size: 10px; letter-spacing: .22em; color: #ffcf9e; }
+  #band-right .sub { display: block; margin-top: 3px; font-size: 9px; color: #c98a4a; }
+
+  /* Left column: profile readout. */
+  #profile { left: 30px; top: 84px; width: 300px; }
+  #profile .hr { height: 1px; background: linear-gradient(90deg, rgba(240,166,60,.7), transparent); margin: 6px 0 10px; }
+  #word { font-size: 30px; line-height: 1; color: var(--orange); text-shadow: 0 0 18px rgba(240,166,60,.45); transition: color .6s; }
+  #rows { margin-top: 12px; font-size: 10px; letter-spacing: .12em; line-height: 17px; }
+  #rows b { display: inline-block; width: 92px; color: var(--dim); font-weight: normal; }
+  #rows span { color: var(--text); }
+  #detail { margin-top: 8px; font-size: 10px; letter-spacing: .1em; color: #8d98ac; max-width: 300px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 13px; }
+  #wave { display: block; width: 300px; height: 34px; margin-top: 12px; }
+
+  /* Bottom left: scan matches. */
+  #scan { left: 30px; bottom: 34px; width: 300px; }
+  #scan .n { font-size: 34px; line-height: 1; color: var(--orange); margin-top: 6px; }
+  #scan .n small { font-size: 12px; letter-spacing: .2em; color: #b98548; margin-left: 8px; }
+  #scan .track { margin-top: 8px; font-size: 10px; letter-spacing: .2em; color: var(--text); }
+  #scan .track i { display: inline-block; width: 6px; height: 6px; background: var(--red); margin-right: 8px;
+                   box-shadow: 0 0 10px var(--red); animation: blink 1.1s steps(2) infinite; }
+  @keyframes blink { to { opacity: .2; } }
+
+  /* Right column: event log. */
+  #log { right: 30px; top: 84px; width: 330px; text-align: right; font-size: 9.5px; letter-spacing: .08em;
+         line-height: 15px; color: var(--dim); }
+  #log div { white-space: nowrap; overflow: hidden; }
+  #log div:last-child { color: var(--text); }
+  #log div.hot { color: var(--orange); }
+  #log div.red { color: var(--red); }
+
+  /* Bottom right: coordinates + clock. */
+  #coords { right: 30px; bottom: 34px; text-align: right; font-size: 10px; letter-spacing: .18em; color: var(--dim); line-height: 16px; }
+  #coords b { color: var(--text); font-weight: normal; }
+
+  /* Corner brackets framing the whole screen. */
+  .corner { position: fixed; z-index: 7; width: 26px; height: 26px; pointer-events: none;
+            border-color: rgba(200,215,240,.35); border-style: solid; border-width: 0; }
+  .corner.tl { left: 18px; top: 58px; border-left-width: 1px; border-top-width: 1px; }
+  .corner.tr { right: 18px; top: 58px; border-right-width: 1px; border-top-width: 1px; }
+  .corner.bl { left: 18px; bottom: 18px; border-left-width: 1px; border-bottom-width: 1px; }
+  .corner.br { right: 18px; bottom: 18px; border-right-width: 1px; border-bottom-width: 1px; }
+
+  /* A slow horizontal scan band, then grain and vignette for the film-grade. */
+  #sweep { position: fixed; left: 0; right: 0; height: 90px; z-index: 5; pointer-events: none;
+           background: linear-gradient(180deg, transparent, rgba(180,200,240,.05) 50%, transparent);
+           animation: sweep 9s linear infinite; }
+  @keyframes sweep { from { top: -90px; } to { top: 100%; } }
+  #grain { position: fixed; inset: 0; z-index: 9; pointer-events: none; opacity: .05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  #vignette { position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    background: radial-gradient(ellipse at 60% 50%, rgba(0,0,0,0) 50%, rgba(2,4,10,.6) 100%); }
 </style>
 </head>
 <body>
-<div id="scene"></div>
+<canvas id="scene"></canvas>
+<canvas id="overlay"></canvas>
 <div id="vignette"></div>
+<div id="sweep"></div>
 <div id="grain"></div>
-<div id="hud">
-  <div class="state"><span class="dot" id="dot"></span><span id="word">Booting</span></div>
-  <div class="detail" id="detail"></div>
+<div id="band"></div>
+<div class="panel big" id="band-title">God's Eye <small>// processing data streams</small></div>
+<div class="panel" id="band-right"><span id="clock">00:00:00Z</span><span class="sub">orbital pass 118 · desc</span></div>
+<div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+
+<div class="panel" id="profile">
+  <div class="label">Building profile</div>
+  <div class="hr"></div>
+  <div class="big" id="word">Booting</div>
+  <div id="rows">
+    <div><b>STATUS</b><span id="r-status">INITIALISING</span></div>
+    <div><b>AUDIO MATCH</b><span id="r-audio">--</span></div>
+    <div><b>FEEDS</b><span id="r-feeds">0 / 0</span></div>
+    <div><b>TRACK</b><span id="r-track">--</span></div>
+  </div>
+  <div id="detail"></div>
+  <canvas id="wave" width="600" height="68"></canvas>
+</div>
+
+<div class="panel" id="scan">
+  <div class="label">Regional scan matches</div>
+  <div class="n big"><span id="matches">0</span><small id="dist">0.0 MI</small></div>
+  <div class="track"><i></i><span id="track-word">TRACK</span></div>
+</div>
+
+<div class="panel" id="log"></div>
+<div class="panel" id="coords">
+  <div>LAT <b id="c-lat">--</b></div>
+  <div>LONG <b id="c-lon">--</b></div>
+  <div>ALT <b>412 KM</b> · PASS <b>DESC-118</b></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
 // ---------------------------------------------------------------------------
-// Ghost's face. One GPU particle sphere that reacts to the pointer and to
-// Ghost's actual speaking voice.
+// Ghost's face, God's Eye edition. A point-cloud Earth with real coastlines,
+// orbiting satellites, data arcs between cities, target reticles, and the
+// readout panels of the Furious 7 interface.
 //
-// Everything that moves is computed in the vertex shader. The old scene moved
-// meshes from JavaScript, which is why it never felt smooth - 60k points cannot
-// be repositioned per frame on the CPU. Here the CPU only updates a handful of
-// uniforms and the GPU does the rest.
+// The Earth is one GPU point cloud, like the old particle sphere, but the
+// points are laid out on a lat/lon grid and kept only where a land mask says
+// there is land (ocean points are kept sparsely and dim). The mask is a
+// 720x360 bit image derived from the Natural Earth II tiles that ship with
+// Cesium, baked in as base64 so the face renders offline and instantly.
 //
-// Two inputs arrive from Python (see ui3d.py):
-//   window.updateGhostState(word, detail)  - state name, drives colour
-//   window.ghostLevel(v)                   - 0..1 speaking loudness, ~25Hz
+// Inputs from Python (ui3d.py):
+//   window.updateGhostState(word, detail)   - state name, drives colour
+//   window.ghostLevel(v)                    - 0..1 speaking loudness, ~25Hz
+//   window.ghostTarget(lat, lon, label)     - turn the globe to a place and
+//                                             pin a reticle there (gods_eye skill)
 // ---------------------------------------------------------------------------
 
-// Deliberately a narrow cool family (cyan -> azure -> violet) rather than one
-// hue per state. Spread across the whole wheel, states read as status LEDs;
-// kept close, they read as one thing changing mood. Thinking is the single
-// warm note, so "I'm busy" is unmistakable without a legend.
-// Luminance is held roughly level so no state looks dimmer than another, and
-// saturation stays high because additive blending washes dense areas toward
-// white anyway.
-const COLORS = {
-  Listening: [0.16, 0.87, 0.80],   // #29DECC  teal - calm, receptive
-  Working:   [0.29, 0.61, 1.00],   // #4A9CFF  azure - active
-  Thinking:  [1.00, 0.76, 0.40],   // #FFC266  amber - the one warm note
-  Speaking:  [0.63, 0.51, 1.00],   // #A182FF  violet - voice
-  Offline:   [0.24, 0.27, 0.34],   // #3D4457  slate, well below the rest
-  Booting:   [0.34, 0.39, 0.50],   // #576480  slate, a touch brighter
+const ACCENT = {
+  Listening: [0.62, 0.79, 1.00],   // cool white-blue, the film's globe
+  Working:   [1.00, 0.62, 0.30],   // orange
+  Thinking:  [1.00, 0.76, 0.40],   // amber
+  Speaking:  [1.00, 0.85, 0.70],   // warm white, voice
+  Offline:   [0.28, 0.32, 0.40],
+  Booting:   [0.40, 0.46, 0.58],
+};
+const hex = (c) => "#" + c.map(v => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
+
+// --- land mask --------------------------------------------------------------
+const MW = 720, MH = 360;
+const MASK = (() => {
+  const bin = atob("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//j4AAAAAAAAGB//+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP+P//2AAAAAAAAB+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/z8f/+AAAw/gD4PgABAP8OAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAACAH8/AAAgP/gAAgAAAAPwYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB8AAAAD/8AI/AAPgAAAAAAAD/QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+wCA//jgAAfgAAAAAAAAAAAPgAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/A/BgAAAH5wAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB9AB+AAAAAEHwAAAAAAAAAAAAAAAAAAAAAAJkQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAGIP/H4AB+wAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAPMAAAAAQAAAAAAAAAAAAABgAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAB/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAB/8BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAwAEAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADGB8AAwAFAAAAAAAAAAAAAAAAAAAAAAGIAAAAAAAAAAAAAAAAAAAAAAAAABgAAAAAAAAAP//////+AAAAAAAA/zgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAABzf/gAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAeAAAAAAAAAH///x4//4AAAAAAAA8AAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAB4AAAAAAAAAf///ge/+EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/zAAAAAAACAAAAAAAAAAAABgAAAAAAAACIAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAf///4//gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//wAAAAAYH8AwAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAQZ//////8A8AAAAAAAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/8uAAAADwOQHg/GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB8AAAAAAAAf///////9///+AP+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/h+AAOADsEAPh/AQAAAAAAAUAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAB8AAAAfgAAf//////////////8AAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH+D//ePAA0AANB/M8AAAAAADggAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAP4AAAA/ggeB//////////////+AAAB/x+AAAAAAAAAAwAAAAAAAAAAAAAAAAAAwAH///gAAGABw/9/AAAAAACAAAAAAAAAB4AAAAAAAAAAAAAAAAAAAAAAAAE8AAAB/jj/9///////////////gYAD///AAAAAAAAAAAAAAAAADIAAAAAAAAAAAA/5//gAAfAB4/f//AAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAeAAAH/h/v5///////////////w//////8D+AAAAAAAAAAAAAA/8AAAAAAAAAAAAAB//4AAfgBP/t/+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYfAAAAAAAAAAAAH/w//8/////////////////////////gAAAAAAAAAAAAf////wAAAAAEAAAPz///gAfgABAAHj8AAAAA0AAAAAAAACAAAAAAAAAAAAAAAP//AAAAAAAAABAAH7h////////////////////////////wAAAAAAAAAAAB///////4AAP/M4AP//78AMAQAAgAA//4AAAAIAAAAAAABgAAAAAAAAAAAAAAf////AAAAAAAAAf8D/j////////////////////////////0f7A//gAAAAAH////////h/////8AP3APAfB+AB+AAf/AAAAAAAAAAAAAAAAAAAAAAAAAAAAA///3//gAAAMAAAP/A/wD//////////////////////////////4///4AAAB////////////////+AAYAAEB+8B4AAD/gAAAAAAAAAAAAAAAAAAAAAAAAAAAD//////+AAwAHH+//8/48f//////////////////////////////////AAAA////////////////8AAP4AGH/8H8AHA/8AAAAAAAAAAAAAAAAAAAAAAAAAAAH///////wB4D///////4////////////////////////////////////8AAAH/////////////////+f///P/8f+ACA/+YAAAO4QAAAAAAAAAAAAAAAAAAAAf///////8DA////////h////////////////////////////////////8AAAAf//////////+f/f///f///P///+AAAz/4AAAH4gAAAAAAAAAAAAAAAAAAAA/////+//+Bx////////B////////////////////////////////////++AAAD////////////gd//////////wIAADw5/gAAH4AAAAAAAAAAAAAAAAAAAAD//////l/8B////////kP///////////////////////////////////n//gH8/////////////wB//////////wAAAH7wPAAAD4AAAAAAAAOAfAAAAAAAAAP//////8AD//////////////////////////////////////////////iH8AH//////////////if/////////zEAAAH/wEAAAB4AAAAAAAACf/wAAAAAAAAP//wH//8AP//////////////////////////////////////////////AD4AD//////////////////////////HwAf/j8AAAAB4QAAAAAAAH//wAAAAAAAA///gH//8MH/////////////////////////////////////////////+AAAAAAP////////////////v///v//8P8AID//gAAAAEwAAAAAAAB/8AAAAAAAAD///gf//+H/////////////////////////////////////////////vgAAAAAAH////////////////+//////AHkAAA//gAAAAMAAAAAAAAB/4AAAAAAAAH///g////j//////////////////////////////////////////////4AAAwAAP////////////////+//v//8AGAAAAPkwAAAAMAAAAAAAAADAAAAAAAAAf//+H///////////////////////////////////////////////////4AAAAAP////////////////////n//+AAAAAAPwwAAAAEAAAAAAAAAAAAAAAAAAB///gf///////////////////////////////////////////////////+AAAAA////////////////9/P//v//gAAYAAAAeAAAAAAAAAAAAAAAAAAAAAAAAP///Af/+////////////////////////////////////////////4///+AAAAAB////////////////+B/////+AAAAAf+AAAAAAAAAAAAAAAAAAAAAAAAAB///+Af/+/8//////////////////////////////////////////x///wAAAAAB////////////////wP/////8AAAAAf/AAAAAAAAAAAAAAAAAAAAAAAAAB///+Af/zj+f///////////////////////////////////////wHB//8AAAAAAA////88P/////////gf/////8AAAAAf/gAAAAAAAAAAAAAAAAAAAAAAAAB///+Af//h/////////////////////////////////////////gGD//4AAAAAAAX///z4P////////////////4AAAAAf/+AAAAAAAAAAAAAAAAAAAAAAAAB///+AP//w////////////////////////////////////////+AAP/XAAAAAAAGO///HwAA/////////////+/4AAAAAf/+AAAAAAAAAAAAAAAAAAAAAAAAB////wDAB/////////////////////////////////////////8AA8gAAAAAAAAAAf/mDAAAD/////////5////4AAAAAf/+AMAAAAAAAAAAAAAAAAAAAAAAA////wAHn///////////////////////////////////////+H4AD4AAAAAAAAAAAZ/+AAAAAT////////n////4AAAAA///AfAAAAAAAAAAAAAAAAAAAAAAA/hx/AE/v/////////////////////////////////////4AAAAAPwAAAAAAAAAAAAD8AAAAAH//////////7///gAAAAf//x/AAAAAAAAAAAAAAAAAAAHAAA/B/8AE/v//8//////////////////////////////////gAAAAA/gAAAAAAAAAAAAHwgAAAADT/////////7f//gAAAAH////gAAAAAAAAAAAAAAAAAAOAAAAA/8AAf/////////////////////////////////////+AAAAAD/gAAAAAAAAAAAAHngAAAABX/////////+f//gAAAAH////wAAAAAAAAAAAAAAAAAAf4AAAA/8QMf/////////////////////////////////////8AAAAAP/4AAAAAAAAAAAAeAAAAAABm/////////+////AAAAD////4AAAAAAAAAAAAAAAAAAfwAAA8f8Aff/////////////////////////////////////wAAAAAP/wAAAAAAAAAAABwAAAAAAAk//////////////8AAAD////4AAAAAAAAAAAAAAAAAAfgAAB8P8Af//////////////////////////////////////gAAAAA//4AAAAAAAAAAADAAAAAAAAG///////////////AAAH////8AAAAAAAAAAAAAAAAAAfwAAB4/AA//////////////////////////////////////+AAAAAA//gAAAAAAAAAAAwAAAAAAAAD///////////////4AAP/////AAAAAAAAAAAAAAAAAAH4AAB9mAAf////////////////////////////7////////4AAAAAA//AAAAAAAAAAAAAAAAAAAAAAH///////////////8B//////wAAAAAAAAAAAAAAAAPn8AAAwgAB/////////////////////////////z////////xAAAAAA//AAAAAAAAAAAAAAAAAAAAAAD///////////////8D//////+AAAAAAAAAAAAAAAAfh+AAA5ADz/////////////////////////////j////////0AAAAAA//AAAAAAAAAAAAAAAAAAAAABD///////////////8D//////3AAAAAAAAAAAAAAAB/AfAAA/8///////////////////////////////n////////8MAAAAA/wAAAAAAAAAAAAAAAAAAAAABj/////////5H////8Bz/////fwAAAAAAAAAAAAAAB/A/AAH/////////////////////////////////P//////////CAAAAfwAAAAAAAAAAAAAAAAAAAAAAA/////////5j////+B///////4AAAAAAAAAAAAAAA/D/4B/////////////////////////////////8f//////////uAAAAfAAAAAAAAAAAAAAAAAAAAAAAAP/////////j////+B///////4AAAAAAAAAAAAAAB/D/8H/////////////////////////////////x///////////uAAAAfAAAAAAAAAAAAAAAAAAAAAAAAP///////////////h///////4AAAAAAAAAAAAAAD4P/4H/////////////////////////////////n///////////uAAAAeAAAAAAAAAAAAAAAAAAAAAAAAH///////////////n///////4AAAAAAAAAAAAAAAAB/4f/////////////////////////////////////////////GAAAAIAAAAAAAAAAAAAAAAAAAAAAAAD/////////9////////////4YAAAAAAAAAAAAAAAAD/5//////////////////////////////////////////////HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////////////////////gwAAAAAAAAAAAAAAAAHAD/////////////////////////////+////////////////HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD3///////////7//////+AABwAAAAAAAAAAAAAAAAAAH/////////////////////////////////////////////+HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8/////////z////////8BwD8AAAAAAAAAAAAAAAAAG//////////////////////////////////////////////+HgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOf/////////////////h4AD/gAAAAAAAAAAAAAAAAH//////////////////////////////////////////////+GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABf//////////4P/////f4AH/gAAAAAAAAAAAAAAAH///////////////////////////////////////////////8EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH///////////wH//////gAP/wAAAAAAAAAAAAAAAH///////////////////////////////////////////////8EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//////////+AB//////4AA34AAAAAAAAAAAAAAAAf//////////////////////////////////////////////4EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//////////4MB//////4AAEYAAAAAAAAAAAAAAAAP////////////8/////////////////////////////////wGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////////////f//////4DAAAAAAAAAAAAAAAAAAAH//////////z/D///8B//v///+P////////////////////gIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////////////wC//////HgAAAAAAAAAAAAAAAAAAD//////////gcD///wB//////9/////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////////////DgP/////8AAAAAAAAAAAAAAAAAAAD////j/////A+H///AD/+////9////////////////////+AIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////+PwH///+PgAAAAAAAAAAAAAAAAAAAD////g////+AMH//8A//6f///////////////////////v4AMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////+Pw////4eAAAAAAAAAAAAAAAAAAAAD////g////+AID//8B//+f////////////////////////4AMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////+Ph/z//A4AAAAAAAAAAAAAAAAAAAAD//+Pwf///8AAAf/+A////////////////////////////wAPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////+P54H/8AAAAAAAAAAAAAAAAAAAAPyH//4H8H///8AAAP/+Af///////////////////////////AAP4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////+P////4AAAAAAAAAAAAAAAAAAAA////gAD8A///wAAAD//AP//////////////////////////OAB/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////+P+D//4AAAAAAAAAAAAAAAAAAAAf///gAh+AP//wAAAB//AD///////4f////////////////8AADnAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////+f4f//8AAAAAAAAAAAAAAAAAAAAf///gAg/wH//4AcAA//wA/P///////////////////////wAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////////5///4AAAAAAAAAAAAAAAAAAAAf///AAAfwD//4D/AA//wAf////////////////////////wAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///7////////////+AAAAAAAAAAAAAAAAAAAAAf//4AAgD+H//7//8D//4Af////////////////////////wAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////////////////4AAAAAAAAAAAAAAAAAAAAAf//wABwA/j/Bh//////8D//////////////////////x//gAADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////////////////wAAAAAAAAAAAAAAAAAAAAAf//AABwAMD8B///////8B//////////////////////j/+AAAD4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////////////////wAAAAAAAAAAAAAAAAAAAAA///AgBwAOB+B///////4A/////////////////////+HB8AAAD4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////////////////AAAAAAAAAAAAAAAAAAAAAA///AAAAAOA/A///////4A/////////////////////wAB8AAADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////////////////AAAAAAAAAAAAAAAAAAAAAA///AAAAAMAfA/////3/wA/////////////////////wAD+AAADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////////////9AAAAAAAAAAAAAAAAAAAAAAf/+AAAAN4Afg///////wA/////////////////////+AB/AAAHgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////////////8AAAAAAAAAAAAAAAAAAAAAAf/8AAAAHgAeAf/////f8A/////////////////////+eAPgAAPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////////////8AAAAAAAAAAAAAAAAAAAAAAB/4AAA4BgAOAf//////+A///////////////z///////APgAD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////////////+AAAAAAAAAAAAAAAAAAAAAAA4AP//8AAAAABz4f///////////////////////////wAPgAH/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//////////////8AAAAAAAAAAAAAAAAAAAAAAAQA///8AAAAAAAA////////////////////////////gAPgAH/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//////////////8AAAAAAAAAAAAAAAAAAAAAAAQD///8AAAA4AAA//////////////////H/////////AAfgP/+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//////////////8AAAAAAAAAAAAAAAAAAAAAAA/////8AAAAIAAw//////////////////H////////+AAfgf/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//////////////wAAAAAAAAAAAAAAAAAAAAAAB/////8AAAAAAAA////////////////////////////AAIB+cAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/////////////AAAAAAAAAAAAAAAAAAAAAAAB/////4AAAAAAAA///////////////3////////////gAABv4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////////////8AAAAAAAAAAAAAAAAAAAAAAAP/////+AAAAAAAB/////////////////+f/////////wAAPOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////////////4AAAAAAAAAAAAAAAAAAAAAAAf//////AAAAAAAB////////////////////////////wAAPIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////////////wAAAAAAAAAAAAAAAAAAAAAAA////////AB+AAAD////////////////////////////4AAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf///////////gAAAAAAAAAAAAAAAAAAAAAAA////////gB/AAAD/////////////////5//////////8AAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAef//////////AAAAAAAAAAAAAAAAAAAAAAAB////////gB/+AAH/////////////////x//////////8AAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOP//////////AAAAAAAAAAAAAAAAAAAAAAAB////////+B//4/P///////////////+cf//////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOH//////////AAAAAAAAAAAAAAAAAAAAAAAB/////////j/////////////////////5/P/////////4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGH///////gH/AAAAAAAAAAAAAAAAAAAAAAAB///////////////////x///////////////////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADn/////4DAAPAAAAAAAAAAAAAAAAAAAAAAAD///////////////////A///////////////////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj/////wAAAHgAAAAAAAAAAAAAAAAAAAAAAH//////////////f////g/////////////P/////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAx/////AAAAHgAAAAAAAAAAAAAAAAAAAAAAP///////////////////wf//////////////////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4f///8AAAAHgAAAAAAAAAAAAAAAAAAAAAA///////////////p////wP//////////////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB8f///8AAAAHwAAAAAAAAAAAAAAAAAAAAAD///////////////w////4D//////////////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeP///8AAAADwAAAAAAAAAAAAAAAAAAAAAD///////////////w////8B+/////////////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHH///8AAAADwAAAAAAAAAAAAAAAAAAAAAP///////////////4f///8AAf////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADH///8AAAABwAAAAAAAAAAAAAAAAAAAAAP///////////////4P///+AAf////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADB///8AAAAAwAAAAAAAAAAAAAAAAAAAAAf///////////////8P///+wCB////////////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADg///4AAAAAAAAAAAAAAAAAAAAAAAAAAAf///////////////8H////gGAAAP////////////////8EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgf//4AAAAAAAAAAAAAAAAAAAAAAAAAAAf///////////////+H////gPAAAH////////////////4MAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYP//4AAAAAAAAAAAAAAAAAAAAAAAAAAA/////////////////B////2/gAAH////////////////wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIH//4AAAAAAAAAAAAAAAAAAAAAAAAAAB/////////////////A//////8AAA////////////////AYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAID//4AAAAP4AAAAAAAAAAAAAAAAAAAAD/////////////////A//////+AAA///////////////+AYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//4AAAAz/AAAAAAAAAAAAAAAAAAAAD/////////////////wf//////AAAf//////z///////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//4AAAAgfgAAAAAAAAAAAAAAAAAAAH/////////////////wf//////AAAf//////z//////+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//4AAEAEBwAAAAAAAAAAAAAAAAAAAH/////////////////wf/////+AAAPv////gD/////DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//8AA/gAA+AAAAAAAAAAAAAAAAAAAH/////////////////4f/////8AAAHP////AB////+CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//+AB/AAAPwAAAAAAAAAAAAAAAAAAD/////////////////4P/////4AAAAP////AA////8CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAB//+AB/AAAfiAAAAAAAAAAAAAAAAAAD/////////////////4H/////wAAAAP///+AAf///4DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAf//AB+AAAAB+AAAAAAAAAAAAAAAAAD/////////////////4D/////wAAAAP///4AAP///wPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//gD+AAAAB/gAAAAAAAAAAAAAAAAD/////////////////4B/////gAAAAP///wAAP///wPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//4f+AAAAN/xgAAAAAAAAAAAAAAAB/////////////////8B/////AAAAAP///gAAH///wOAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////8AAA8AQBgAAAAAAAAAAAAAAAB/////////////////+A////+AAAAAP///AAAH///4AAAAeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///8AAAAAAAAAAAAAAAAAAAAAAAD//////////////////Af///4AAAAAH//+AAAH///8AAAAeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///8AAAAAAAAAAAAAAAAAAAAAAAD//////////////////gP///gAAAAAH//4AAAH///+AAAAfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA///8AAAAAAAAAAAAAAAAAAAAAAAH//////////////////gP//8AAAAAAH//4AAAH3///AAAAeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPz/4AAAAAAAAAAAAAAAAAAAAAAAH//////////////////gP//4AAAAAAH//gAAAHD///gAAA+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA///AAAAAAAAAAAAAAAAAAAAAAH//////////////////wP//4AAAAAAD/+AAAAAD///wAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//wAAAAAAAAAAAAAAAAAAAAAP//////////////////4P//AAAAAAAB/+AAAAAD///wAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//wAAAAAAAAAAAAAAAAAAAAAP//////////////////+P/4AAAAAAAB/+AAAAAB///4AAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//wAAAAAAAAAAAAAAAAAAAAAH///////////////////H/AAAAAAAAA/+AAAAAB///4AAAPgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/wAAAAAAAAAAAAAAAAAAAAAH///////////////////n8AAAAAAAAA/+AAAAAB///4AAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/wAAAAAAAAAAAAAAAAAAAAAH///////////////////3AAAAAAAAAA/+AAAAAA7//4AAAMIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/gAAAAAAAAAAAAAAAAAAAAAH///////////////////4AABgAAAAAA/+AAAAAA4//4AAAICAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfgAAAyAAAAAAAAAAAAAAAAAH///////////////////4AAAAAAAAAAf8AAAAAA4f/4AAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJgAADjAAAAAAAAAAAAAAAAAA///////////////////4ADgAAAAAAAP8AAAAAAgH/4AAADDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgAA/vwAAAAAAAAAAAAAAAAAf//////////////////8B/AAAAAAAAP8AAAAAAgH/gAAADmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHwAB///DmAAAAAAAAAAAAAAAf//////////////////+//AAAAAAAAP8AAAAAAgB+AAAAAyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH4AB/P//8AAAAAAAAAAAAAAAP/////////////////////AAAAAAAAH4AAAAABgA8AAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB4AB/P//+AAAAAAAAAAAAAAAH/////////////////////AAAAAAAAH4AAAAABgA4AAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcfj////+AAAAAAAAAAAAAAAD/////////////////////AAAAAAAAHzgAAAABwAgAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf53/////gAAAAAAAAAAAAAAD////////////////////+AAAAAAAADjgAAAAB4AAAAAAATgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABw//////wAAAAAAAAAAAAAAD////////////////////8AAAAAAAAADwAAAAA4AAAAAAB/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAw//////8AAAAAAAAAAAAAAA////f///////////////8AAAAAAAAADwAAAAAYAAAAAACHwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////8AAAAAAAAAAAAAAAf///////////////////4AAAAAAAAADwAAAAAOAAAAAAAHgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////AAAAAAAAAAAAAAAH///////////////////4AAAAAAAAADwAAAAAHAAAABwAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////gAAAAAAAAAAAAAAD///4D//////////////wAAAAAAAAABgAAAAAHgAAABwAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///////4AAAAAAAAAAAAAB///AB//////////////wAAAAAAAAAAAAAABAH4AAAH8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///////8AAAAAAAAAAAAAA/gcAB//////////////wAAAAAAAAAAAAAAB8D4AAAH8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///////+AAAAAAAAAAAAAAOAAAA4/////////////AAAAAAAAAAAAAAAA+D4AAA/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////////AAAAAAAAAAAAAAAAAAAAf////////f//+AAAAAAAAAAAAAAAAfD4AAA/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////////gAAAAAAAAAAAAAAAAAAAP////////f//+AAAAAAAAAAAAAAAAHh4AAB/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf////////gAAAAAAAAAAAAAAAAAAAP///////////8AAAAAAAAAAAAAAAAHx4AAH/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////////gAAAAAAAAAAAAAAAAAAAP///////////4AAAAAAAAAAAAAAAAD48AAf/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/////////wAAAAAAAAAAAAAAAAAAAP///////////wAAAAAAAAAAAAAAAAB+eAAf/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/////////4AAAAAAAAAAAAAAAAAAAf//////3////AAAAAAAAAAAAAAAAAA/mAP//4AADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/////////4AAAAAAAAAAAAAAAAAAAf//////////8AAAAAAAAAAAAAAAAAE/wAP//8P8CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/////////wAAAAAAAAAAAAAAAAAAAf//////////8AAAAAAAAAAAAAAAAAAf8AP//wd4CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/////////+AAAAAAAAAAAAAAAAAAAf//////8H//wAAAAAAAAAAAAAAAAAAP8AH//gAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////////+AAAAAAAAAAAAAAAAAAAf//////8H//wAAAAAAAAAAAAAAAAAAP8AH//ggAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////////8AAAAAAAAAAAAAAAAAA///////8P//gAAAAAAAAAAAAAAAAAAn+AH//gmgAD+IAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////////9/AAAAAAAAAAAAAAAAAAf//////8P//AAAAAAAAAAAAAAAAAAAj+AD//B+AAB+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf///////////wAAAAAAAAAAAAAAAAAf//////8f/+AAAAAAAAAAAAAAAAAAAD/YB//B8AAAeD4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf///////////+AAAAAAAAAAAAAAAAAP/////////8AAAAAAAAAAAAAAAAAAAB/8B/+B+AAAOH/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/////////////AAAAAAAAAAAAAAAAH/////////4AAAAAAAAAAAAAAAAAAAA/wgP+DuAD4fP/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////////////gAAAAAAAAAAAAAAAD/////////4AAAAAAAAAAAAAAAAAAAA/wAAeDuAYMP///AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////////////wAAAAAAAAAAAAAAAB/////+///wAAAAAAAAAAAAAAAAAAAAfwAAIAnAAAJ///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//////////////4AAAAAAAAAAAAAAAA/////+///wAAAAAAAAAAAAAAAAAAAAHwAAAAngAAAP//8ADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//////////////+AAAAAAAAAAAAAAAA/////+///gAAAAAAAAAAAAAAAAAAAADwAAAAhgAAAB//8AGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////////////wAAAAAAAAAAAAAAAf////+///gAAAAAAAAAAAAAAAAAAAABwAAAAhgAAAA//+A+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////////////4AAAAAAAAAAAAAAAf////+///gAAAAAAAAAAAAAAAAAAAAAPAAAAAAAABAf//j4BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////////////4AAAAAAAAAAAAAAAf/////f//gAAAAAAAAAAAAAAAAAAAAAPgAAAAAAABAf//wABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////////////4AAAAAAAAAAAAAAAP/////f//gAAAAAAAAAAAAAAAAAAAAAP/5AAAAAAAAP//gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//////////////4AAAAAAAAAAAAAAAP/////v//gAAAAAAAAAAAAAAAAAAAAAD/+AAAAAAAAf//gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//////////////4AAAAAAAAAAAAAAAH/////v//gAAAAAAAAAAAAAAAAAAAAAAB/gAAAAAAA//H4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//////////////4AAAAAAAAAAAAAAAH////////gAAAAAAAAAAAAAAAAAAAAAAAAp++B4AAAB+B4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//////////////wAAAAAAAAAAAAAAAH////////wAAAAAAAAAAAAAAAAAAAAAAAAAgADgAAAA+A+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////////////f/gAAAAAAAAAAAAAAAH////////wAAAAAAAAAAAAAAAAAAAAAAAAABgOAAAAAAAfAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//////////////gAAAAAAAAAAAAAAAH////////4AAAAAAAAAAAAAAAAAAAAAAAAAAwMAAAAAAAfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//////////////AAAAAAAAAAAAAAAAD////////4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf////////////+AAAAAAAAAAAAAAAAD////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////////////8AAAAAAAAAAAAAAAAD//////7/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAGYAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH////////////4AAAAAAAAAAAAAAAAD//////7/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPQAOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH////////////4AAAAAAAAAAAAAAAAH//////7/8AAMAAAAAAAAAAAAAAAAAAAAAAAAAAH/8AOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH////////////wAAAAAAAAAAAAAAAAP//////7/8AAMAAAAAAAAAAAAAAAAAAAAAAAAAAH/8AOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////////////gAAAAAAAAAAAAAAAAP//////7/8AAOAAAAAAAAAAAAAAAAAAAAAAAAAAP/4APAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////////////AAAAAAAAAAAAAAAAAf////////8AA+AAAAAAAAAAAAAAAAAAAAAAAAAIP/8APAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////////////AAAAAAAAAAAAAAAAAf////////8AA+AAAAAAAAAAAAAAAAAAAAAAAAA8f/wAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////////////AAAAAAAAAAAAAAAAAf////////8AB+AAAAAAAAAAAAAAAAAAAAAAAAB///wAP4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf+//////////AAAAAAAAAAAAAAAAA/////////8AH+AAAAAAAAAAAAAAAAAAAAAAAAH///4Af4AAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH+f/////////AAAAAAAAAAAAAAAAA/////////4A/8AAAAAAAAAAAAAAAAAAAAAAAAH///+Af4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/f/////////AAAAAAAAAAAAAAAAA/////////wB/8AAAAAAAAAAAAAAAAAAAAAAAAP////Af8AAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////////AAAAAAAAAAAAAAAAA/////////AB/8AAAAAAAAAAAAAAAAAAAAAAABv////4/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////////AAAAAAAAAAAAAAAAA////////8AD/8AAAAAAAAAAAAAAAAAAAAAAAD/////9/8AAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////////AAAAAAAAAAAAAAAAA////////4AD/8AAAAAAAAAAAAAAAAAAAAAAAB///////+AAAAAAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////+AAAAAAAAAAAAAAAAAf///////wAD/4AAAAAAAAAAAAAAAAAAAAAAAD///////+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////+AAAAAAAAAAAAAAAAAP///////gAB/4AAAAAAAAAAAAAAAAAAAAAAAH////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////+AAAAAAAAAAAAAAAAAP///////AAB/4AAAAAAAAAAAAAAAAAAAAAAAH////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////8AAAAAAAAAAAAAAAAAH//////8AAB/wAAAAAAAAAAAAAAAAAAAAAAAf////////4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////8AAAAAAAAAAAAAAAAAH//////8AAD/wAAAAAAAAAAAAAAAAAAAAAAP/////////8AAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////4AAAAAAAAAAAAAAAAAD//////+AAD/wAAAAAAAAAAAAAAAAAAAAAB//////////+AAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////4AAAAAAAAAAAAAAAAAD//////+AAH/gAAAAAAAAAAAAAAAAAAAAAH//////////+AAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////wAAAAAAAAAAAAAAAAAB///////AAH/gAAAAAAAAAAAAAAAAAAAAAf///////////AAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////AAAAAAAAAAAAAAAAAAB///////AAH/AAAAAAAAAAAAAAAAAAAAAA////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////////AAAAAAAAAAAAAAAAAAB///////AAH/AAAAAAAAAAAAAAAAAAAAAA////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////////AAAAAAAAAAAAAAAAAAAB///////AAD/AAAAAAAAAAAAAAAAAAAAAA////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////8AAAAAAAAAAAAAAAAAAAA///////AAD+AAAAAAAAAAAAAAAAAAAAAB////////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////wAAAAAAAAAAAAAAAAAAAA//////+AAD+AAAAAAAAAAAAAAAAAAAAAB////////////+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////gAAAAAAAAAAAAAAAAAAAA//////wAAB8AAAAAAAAAAAAAAAAAAAAAA/////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////+AAAAAAAAAAAAAAAAAAAAA//////AAAAAAAAAAAAAAAAAAAAAAAAAAA/////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////+AAAAAAAAAAAAAAAAAAAAA//////AAAAAAAAAAAAAAAAAAAAAAAAAAAf////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////+AAAAAAAAAAAAAAAAAAAAAf/////AAAAAAAAAAAAAAAAAAAAAAAAAAA/////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//////+AAAAAAAAAAAAAAAAAAAAAf/////AAAAAAAAAAAAAAAAAAAAAAAAAAA/////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////+AAAAAAAAAAAAAAAAAAAAAf/////AAAAAAAAAAAAAAAAAAAAAAAAAAAf////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////+AAAAAAAAAAAAAAAAAAAAAP/////AAAAAAAAAAAAAAAAAAAAAAAAAAAf////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////+AAAAAAAAAAAAAAAAAAAAAH////+AAAAAAAAAAAAAAAAAAAAAAAAAAAf////////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////8AAAAAAAAAAAAAAAAAAAAAD////8AAAAAAAAAAAAAAAAAAAAAAAAAAAP////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////4AAAAAAAAAAAAAAAAAAAAAD////4AAAAAAAAAAAAAAAAAAAAAAAAAAAP////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////wAAAAAAAAAAAAAAAAAAAAAB////wAAAAAAAAAAAAAAAAAAAAAAAAAAAP////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf//////QAAAAAAAAAAAAAAAAAAAAAB////wAAAAAAAAAAAAAAAAAAAAAAAAAAAP////////////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////+AAAAAAAAAAAAAAAAAAAAAAA////gAAAAAAAAAAAAAAAAAAAAAAAAAAAH////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////8AAAAAAAAAAAAAAAAAAAAAAAf///AAAAAAAAAAAAAAAAAAAAAAAAAAAAH////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////8AAAAAAAAAAAAAAAAAAAAAAAf//+AAAAAAAAAAAAAAAAAAAAAAAAAAAAD///8AP//////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////8AAAAAAAAAAAAAAAAAAAAAAAf//8AAAAAAAAAAAAAAAAAAAAAAAAAAAAD///AAD/////+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////4AAAAAAAAAAAAAAAAAAAAAAA///4AAAAAAAAAAAAAAAAAAAAAAAAAAAAD//8AAB/////+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////4AAAAAAAAAAAAAAAAAAAAAAAf//gAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//wAAA+////4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/////wAAAAAAAAAAAAAAAAAAAAAAAP/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/gAAAAd////4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////8/gAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+AAAAAZf///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAABf///wAAAAAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf///gAAAAAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH///gAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///gAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///AAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///AAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//wAAAAAAAAP4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADDAAAAAAAAAP4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH//zgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO4AAAAAAAEOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAN//wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP4AAAAAAAPgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM//wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH4AAAAAAAPgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAN//6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH4AAAAAAAfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ//4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAA+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAL/+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAX/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAv//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAv/+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/AAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/gAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADzwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABxwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAR8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAAACAAAAAD/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8AAAAAAAAAAA/D4BBwAAAAAP4P//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9+AAAAAAAAAf////2jzACB/////8AD4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//+AAAAAAAAef///x/wAAH/////wABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////+D//AAAD/+f///9/wAAH/////gAD//gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/////+D8AAAAD/+f///9/8AAB/////gAf///+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMBoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAB/////+AD4AAAf/+f/////+AAA////+AA/////3gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACDvgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANwP/////+DAAIATA/+f//////AAAf///4AB/////j5wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+////////8AAEH/////AAA//8AAH////4AA///////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPAAAAAAAAAAAAAAAAAAAAAAABgAAAAAAA0f///////8AAAH/////AAAf/8AAH////4AA///////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAGAAAAAAAAAAAAAAAAADn4AL//+ADAAAAwQP//////+AAAAP/////AAAH/8AP/////8AAP//+D//8AOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHP/1///+CDAAAHAAH/////+AAAAAP/////AAAB/8Af/////gAAB+eAA/7/ADIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAAAAAAAAAAAAAAAOD/////1gB/gAAGAAP////AAAAAAAf/////AAAB/wAH/////gAAAAAAAD7/3wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYH4AAAAAAAAAAAAAAAGA/////8ABn/gAAYAAP////AAAAAAAIP////AAAAAAAH////+AAAAACAAD78AEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf14/gAAAAAf4AAAAAAAAAAAAAAAAD/////wAB///4AHwAP//AAAAAAAAAAD///gAAAAAAB/////YAAAAAAAB//+eAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/j/+AIAAAPwAAAAAAAAAAAAAAIAD//6A/AA////4AAAAP//AAAAAAAAAAD///gAAAAAAD////4AAAAAAAAAD4EDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPwA/PAAAAAAAAAAAAAAAAAAAAAAAH//gA/A/+f///4AAAP/+AAAAAAAAAAB//gAAAAAAAP////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwwAAB8AAAAAAAA/8AAAAAAAAAAAAAAAAAAAADgf/gAAAAAB+A////4AAAf8AAAAAAAAAAAP8AAAAAAAD/////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAw//8AAAAQOAAAAc//AAAAAAAGAAAAAAAAAAAAAAefAAAAACAAAf///4AAAf4AAAAAAAAAAAP8AAAAAAAD/////gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB8f8///AAAAA/4DAAADAg0AAAAAAAAAAAAAAAAAAAAAMcAAAQAAAAB+D/+vwAAAAAAAAAAAAAAAAAAAAAAAAAB//+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//8//6AAAAAf4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAB8D/4HwAAAAAAAAAAAAAAAAAAAAAAAAAAAH4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/gB/AAAAAAAAAAAAAAAAAAAAAIAAAPgAAAAAAAAAAAAAAAAAAAAAB8D/4HwIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/gB+AAAAAAAAAAAAAAAAAAAAAYAAAAcAAAAAAAAAAAAAAIAAAAAAAAD/4HwIAAAAAB+B8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQf/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/AAAAAD/4HwAAAAAAB//8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwPgAwAAAAAAgAQAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAOOAAAAAAAAAAAAAAAAB/AAAAAD/4HwAAAAAAB/+AAAAAAAAAAAAAAAAAAHgAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwGAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8MAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP+AAAAAAAAAAAAAAAAAAAAAAP/gAAAAAAAAAAAAAAAAA//+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgAABgAAAAAAAAAAAAP///1AAAgAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAIwAAHwAAAAAAAAAAAH/////AwBgAAAAAAAAAAAAAGAAAAAAAAAPgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////////4APwAAAA/B+AAAH////////AAAAAAAAAAAAAAAAAB+D//4AP//////+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB+AAAAAAAAAfg////////////wAAA///+AAAH/wP1////B///8AAH/wAAf///////////////////+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfg//////////////gA///+AAAAAAAAP/AAB///8H4H//////////////////////////////////gAA//+D/4AAAAAAAAAAAAD////wAAAAAAAAAAAAH/wAAf///////////////////////4//wPgf//A//////////////////////////////////////////g////////4H///gAAAAB//////wAP//A//+AAAAH/wAAf////////////////////////////////////////////////////////////////////////////////+AAH4H///gAAAAB//8AAAAAAf/AAAAAAD////////");
+  const out = new Uint8Array(MW * MH);
+  for (let i = 0; i < out.length; i++) out[i] = (bin.charCodeAt(i >> 3) >> (7 - (i & 7))) & 1;
+  return out;
+})();
+function isLand(latDeg, lonDeg) {
+  if (latDeg < -79) return 1;   // Antarctic ice reads as ocean in the source tiles
+  const i = Math.min(MW - 1, Math.floor((lonDeg + 180) / 360 * MW));
+  const j = Math.min(MH - 1, Math.floor((90 - latDeg) / 180 * MH));
+  return MASK[j * MW + i];
+}
+
+// --- cities -----------------------------------------------------------------
+// Targets for reticles and endpoints for the data arcs.
+const CITIES = [
+  ["MELBOURNE", -37.81, 144.96], ["SYDNEY", -33.87, 151.21], ["TOKYO", 35.68, 139.69],
+  ["SINGAPORE", 1.35, 103.82], ["MUMBAI", 19.08, 72.88], ["DUBAI", 25.20, 55.27],
+  ["MOSCOW", 55.76, 37.62], ["LONDON", 51.51, -0.13], ["PARIS", 48.86, 2.35],
+  ["BERLIN", 52.52, 13.40], ["CAIRO", 30.04, 31.24], ["LAGOS", 6.52, 3.38],
+  ["JOHANNESBURG", -26.20, 28.05], ["NEW YORK", 40.71, -74.01], ["LOS ANGELES", 34.05, -118.24],
+  ["CHICAGO", 41.88, -87.63], ["MEXICO CITY", 19.43, -99.13], ["SAO PAULO", -23.55, -46.63],
+  ["BUENOS AIRES", -34.60, -58.38], ["BEIJING", 39.90, 116.40], ["SHANGHAI", 31.23, 121.47],
+  ["HONG KONG", 22.32, 114.17], ["SEOUL", 37.57, 126.98], ["JAKARTA", -6.21, 106.85],
+  ["ISTANBUL", 41.01, 28.98], ["TEHRAN", 35.69, 51.39], ["NAIROBI", -1.29, 36.82],
+  ["TORONTO", 43.65, -79.38], ["HONOLULU", 21.31, -157.86], ["ANCHORAGE", 61.22, -149.90],
+  ["REYKJAVIK", 64.15, -21.94], ["PERTH", -31.95, 115.86], ["AUCKLAND", -36.85, 174.76],
+  ["LIMA", -12.05, -77.04], ["ABU DHABI", 24.45, 54.65], ["KARACHI", 24.86, 67.01],
+];
+
+// --- scene ------------------------------------------------------------------
+const RADIUS = 13.0;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(0, 0, 44);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+document.getElementById("scene").replaceWith(renderer.domElement);
+renderer.domElement.id = "scene";
+
+// Everything that belongs to the planet lives in one group: the globe is
+// offset right of centre so the readout columns have the left side, and
+// rotation + axial tilt are applied here.
+const earth = new THREE.Group();
+earth.position.set(5.5, -0.5, 0);
+earth.rotation.x = 0.28;
+scene.add(earth);
+
+const latLonToDir = (lat, lon) => {
+  const la = lat * Math.PI / 180, lo = lon * Math.PI / 180;
+  return new THREE.Vector3(Math.cos(la) * Math.cos(lo), Math.sin(la), -Math.cos(la) * Math.sin(lo));
 };
 
-// Density is a look decision, not a performance one. Past ~30k the points
-// overlap into a continuous shell and you lose the individual particles that
-// make this read as a point cloud rather than a sphere.
-const COUNT = 9000;
-const RADIUS = 13.0;
-
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(
-  52, window.innerWidth / window.innerHeight, 0.1, 500);
-camera.position.set(0, 0, 42);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-// Cap the pixel ratio: at 60k additive points a 2x retina buffer is pure
-// overdraw and costs far more than it shows.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
-document.getElementById("scene").appendChild(renderer.domElement);
-
-// --- geometry: an evenly covered sphere -------------------------------------
-// Fibonacci spiral rather than random spherical coordinates, which clump hard
-// at the poles and look blotchy at this density.
-const geo = new THREE.BufferGeometry();
-const pos = new Float32Array(COUNT * 3);
-const rnd = new Float32Array(COUNT);       // per-particle phase, kills uniformity
-const GOLDEN = Math.PI * (3 - Math.sqrt(5));
-for (let i = 0; i < COUNT; i++) {
-  const y = 1 - (i / (COUNT - 1)) * 2;
-  const r = Math.sqrt(Math.max(0, 1 - y * y));
-  const th = GOLDEN * i;
-  pos[i*3]   = Math.cos(th) * r;
-  pos[i*3+1] = y;
-  pos[i*3+2] = Math.sin(th) * r;
-  rnd[i] = Math.random();
+// --- point cloud earth -------------------------------------------------------
+// Rows of points at ~0.85 degree spacing, longitudes thinned by cos(lat) so
+// the density is uniform on the sphere rather than crowding at the poles.
+// Land keeps every point; ocean keeps one in five, dim, so the seas read as a
+// faint lattice rather than empty black.
+const STEP = 0.85;
+const P = [], LAND = [], RND = [];
+for (let lat = -89.5; lat <= 89.5; lat += STEP) {
+  const n = Math.max(6, Math.round(360 / STEP * Math.cos(lat * Math.PI / 180)));
+  for (let k = 0; k < n; k++) {
+    const lon = -180 + (k + 0.5) * 360 / n;
+    const land = isLand(lat, lon);
+    if (!land && (k * 7 + Math.floor(lat)) % 5 !== 0) continue;
+    const d = latLonToDir(lat, lon);
+    P.push(d.x, d.y, d.z); LAND.push(land); RND.push(Math.random());
+  }
 }
-geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-geo.setAttribute("aRand", new THREE.BufferAttribute(rnd, 1));
+const geo = new THREE.BufferGeometry();
+geo.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+geo.setAttribute("aLand", new THREE.Float32BufferAttribute(LAND, 1));
+geo.setAttribute("aRand", new THREE.Float32BufferAttribute(RND, 1));
 
 const uniforms = {
   uTime:    { value: 0 },
   uRadius:  { value: RADIUS },
-  uLevel:   { value: 0 },                       // speaking loudness 0..1
+  uLevel:   { value: 0 },
   uPointer: { value: new THREE.Vector3(999, 0, 0) },
-  uPush:    { value: 0 },                       // pointer influence 0..1
-  uColor:   { value: new THREE.Vector3(...COLORS.Booting) },
-  uSize:    { value: Math.min(window.devicePixelRatio, 1.75) * 0.85 },
+  uPush:    { value: 0 },
+  uColor:   { value: new THREE.Vector3(...ACCENT.Booting) },
+  uSize:    { value: Math.min(devicePixelRatio, 1.75) },
+  uScan:    { value: 0 },      // longitude (radians, local frame) of the scan plane
+  uBoot:    { value: 0 },      // 0..1 build-in progress
 };
 
 const vert = `
-uniform float uTime, uRadius, uLevel, uPush, uSize;
+uniform float uTime, uRadius, uLevel, uPush, uSize, uScan, uBoot;
 uniform vec3 uPointer;
-attribute float aRand;
-varying float vGlow;
-
-// Cheap value noise. A full simplex implementation is overkill here - these
-// particles only need to breathe, not look like terrain.
-float hash(vec3 p) {
-  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
-}
+attribute float aLand, aRand;
+varying float vGlow, vLand, vScan, vAlpha;
+float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float noise(vec3 p) {
-  vec3 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float n = mix(
-    mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
-        mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
-        mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
-  return n * 2.0 - 1.0;
+  vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x), mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x), mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z) * 2.0 - 1.0;
 }
-
 void main() {
   vec3 dir = normalize(position);
-
-  // Idle: two octaves drifting at different rates, so the resting surface
-  // undulates instead of sitting as a perfect sphere. The second octave is
-  // what stops the first from reading as a single slow wobble.
-  float breathe = noise(dir * 2.4 + uTime * 0.15) * 0.85
-                + noise(dir * 5.2 - uTime * 0.09) * 0.38;
-
-  // Voice: a faster, tighter ripple scaled by how loud Ghost currently is.
-  // Driven by real playback amplitude, so the surface tracks the actual words.
-  // Kept moderate on purpose: at higher amplitudes the noise term stops
-  // reading as a sphere pulsing and starts reading as a blob.
-  float voice = noise(dir * 4.2 + uTime * 1.5) * uLevel * 1.35
-              + uLevel * 0.75;
-
-  float r = uRadius + breathe + voice;
+  // Boot: points fly in from a scattered shell and settle onto the surface,
+  // land first (it reads as "coastlines resolving").
+  float order = aRand * 0.6 + (1.0 - aLand) * 0.4;
+  float settle = smoothstep(order, order + 0.25, uBoot);
+  float breathe = noise(dir * 2.4 + uTime * 0.15) * 0.10;
+  float voice = (noise(dir * 4.2 + uTime * 1.5) * 0.9 + 0.5) * uLevel * 0.9;
+  float r = uRadius + breathe + voice + (1.0 - settle) * (6.0 + aRand * 14.0);
   vec3 p = dir * r;
-
-  // Pointer repulsion - the visible "you are touching it" effect.
-  // Falls off with angular distance so the whole surface shifts subtly while
-  // the area under the cursor blows out, like the reference image.
-  // Tighter falloff and a much smaller push than feels right on paper: the
-  // displacement, the scatter, the point size and the glow all scale with
-  // infl, so they compound and it blows out fast.
   float d = distance(normalize(uPointer), dir);
-  float infl = smoothstep(0.45, 0.0, d) * uPush;
-  p += dir * infl * 1.1;
-  // Slight lateral scatter so displaced particles spray rather than slide.
-  p += vec3(noise(dir * 9.0 + uTime), noise(dir * 9.0 - uTime),
-            noise(dir * 9.0 + 4.0)) * infl * 0.35;
-
-  vGlow = infl * 0.22 + uLevel * 0.55 + aRand * 0.12;
-
+  float infl = smoothstep(0.42, 0.0, d) * uPush;
+  p += dir * infl * 1.2;
+  p += vec3(noise(dir * 9.0 + uTime), noise(dir * 9.0 - uTime), noise(dir * 9.0 + 4.0)) * infl * 0.3;
+  // Scan plane: a longitude band that sweeps around; points inside it flare.
+  float lon = atan(-dir.z, dir.x);
+  float dl = abs(mod(lon - uScan + 3.14159, 6.28318) - 3.14159);
+  vScan = smoothstep(0.22, 0.0, dl) * (0.6 + aLand * 0.6);
+  vGlow = infl * 0.3 + uLevel * 0.45 + aRand * 0.10 + vScan * 0.8;
+  vLand = aLand;
+  vAlpha = settle;
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
-  // Perspective-correct sizing, plus a nudge for excited particles.
-  gl_PointSize = uSize * (300.0 / -mv.z) * (0.55 + aRand * 0.5 + infl * 0.22);
-}
-`;
-
+  float base = mix(0.55, 1.0, aLand);
+  gl_PointSize = uSize * (120.0 / -mv.z) * base * (0.7 + aRand * 0.4 + infl * 0.3 + vScan * 0.4) * (0.4 + settle * 0.6);
+}`;
 const frag = `
 uniform vec3 uColor;
-varying float vGlow;
+varying float vGlow, vLand, vScan, vAlpha;
 void main() {
-  // Round, soft-edged point drawn analytically - no sprite texture to upload,
-  // and it stays crisp at any point size.
-  vec2 c = gl_PointCoord - 0.5;
-  float d = dot(c, c);
+  vec2 c = gl_PointCoord - 0.5; float d = dot(c, c);
   if (d > 0.25) discard;
   float a = smoothstep(0.25, 0.0, d);
-  vec3 col = mix(uColor, vec3(1.0), clamp(vGlow * 0.55, 0.0, 0.7));
-  // Deliberately faint. These are additively blended and thousands overlap on
-  // the front face - anything above ~0.1 base alpha accumulates into a solid
-  // white disc and the individual particles disappear.
-  gl_FragColor = vec4(col, a * (0.30 + vGlow * 0.55));
-}
-`;
-
-const mat = new THREE.ShaderMaterial({
+  vec3 land = mix(uColor, vec3(1.0), 0.35 + vGlow * 0.4);
+  vec3 sea = uColor * 0.55;
+  vec3 col = mix(sea, land, vLand);
+  col = mix(col, vec3(1.0, 0.85, 0.6), vScan * 0.5);
+  float alpha = mix(0.18, 0.62, vLand) + vGlow * 0.4;
+  gl_FragColor = vec4(col, a * alpha * vAlpha);
+}`;
+const cloud = new THREE.Points(geo, new THREE.ShaderMaterial({
   uniforms, vertexShader: vert, fragmentShader: frag,
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-});
-const sphere = new THREE.Points(geo, mat);
-scene.add(sphere);
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+earth.add(cloud);
 
-// --- inputs from Python ------------------------------------------------------
-let targetColor = COLORS.Booting.slice();
-window.updateGhostState = function (word, detail) {
-  targetColor = (COLORS[word] || COLORS.Booting).slice();
-  document.getElementById("word").textContent = word;
-  document.getElementById("detail").textContent = detail || "";
-  const hex = "#" + targetColor.map(
-    v => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
-  const dot = document.getElementById("dot");
-  dot.style.background = hex;
-  dot.style.color = hex;
-};
+// --- graticule + atmosphere --------------------------------------------------
+(function graticule() {
+  const pts = [];
+  const seg = 96;
+  for (let la = -60; la <= 60; la += 30)
+    for (let i = 0; i < seg; i++) {
+      const a = latLonToDir(la, i / seg * 360 - 180), b = latLonToDir(la, (i + 1) / seg * 360 - 180);
+      pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    }
+  for (let lo = -180; lo < 180; lo += 30)
+    for (let i = 0; i < seg; i++) {
+      const a = latLonToDir(i / seg * 180 - 90, lo), b = latLonToDir((i + 1) / seg * 180 - 90, lo);
+      pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pts.map(v => v * RADIUS * 0.995), 3));
+  earth.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({
+    color: 0x9ec9ff, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false })));
+})();
 
-// Called ~25 times a second while Ghost speaks. Smoothed here rather than in
-// Python so the surface never steps between updates.
-let levelTarget = 0;
-window.ghostLevel = function (v) {
-  levelTarget = Math.max(0, Math.min(1, v || 0));
-};
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(RADIUS * 1.06, 64, 64), new THREE.ShaderMaterial({
+  uniforms: { uColor: uniforms.uColor, uLevel: uniforms.uLevel },
+  vertexShader: `varying vec3 vN, vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0);
+    vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform vec3 uColor; uniform float uLevel; varying vec3 vN, vV;
+    void main(){ float f = pow(1.0 - abs(dot(vN, vV)), 3.2); gl_FragColor = vec4(uColor, f * (0.55 + uLevel * 0.5)); }`,
+  side: THREE.BackSide, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+earth.add(atmo);
 
-// --- pointer ----------------------------------------------------------------
-// Tracked as a direction on the sphere, so the effect follows the cursor even
-// when it is off the sphere entirely.
+// --- cities ------------------------------------------------------------------
+const cityGeo = new THREE.BufferGeometry();
+cityGeo.setAttribute("position", new THREE.Float32BufferAttribute(
+  CITIES.flatMap(([, la, lo]) => latLonToDir(la, lo).multiplyScalar(RADIUS * 1.01).toArray()), 3));
+earth.add(new THREE.Points(cityGeo, new THREE.PointsMaterial({
+  color: 0xffd9a0, size: 0.32, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false })));
+
+// --- data arcs ---------------------------------------------------------------
+// Great-circle arcs between city pairs, lifted off the surface, each with a
+// pulse that travels along it. Pairs are re-rolled every so often so the
+// network keeps changing.
+const ARCS = [];
+const ARC_N = 14, ARC_SEG = 64;
+const arcGeo = new THREE.BufferGeometry();
+const arcPos = new Float32Array(ARC_N * ARC_SEG * 2 * 3);
+const arcCol = new Float32Array(ARC_N * ARC_SEG * 2 * 3);
+arcGeo.setAttribute("position", new THREE.BufferAttribute(arcPos, 3));
+arcGeo.setAttribute("color", new THREE.BufferAttribute(arcCol, 3));
+earth.add(new THREE.LineSegments(arcGeo, new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
+const pulseGeo = new THREE.BufferGeometry();
+const pulsePos = new Float32Array(ARC_N * 3);
+pulseGeo.setAttribute("position", new THREE.BufferAttribute(pulsePos, 3));
+earth.add(new THREE.Points(pulseGeo, new THREE.PointsMaterial({
+  color: 0xffb060, size: 0.5, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })));
+
+function rollArc(i) {
+  const a = CITIES[Math.floor(Math.random() * CITIES.length)];
+  let b = a; while (b === a) b = CITIES[Math.floor(Math.random() * CITIES.length)];
+  ARCS[i] = { a: latLonToDir(a[1], a[2]), b: latLonToDir(b[1], b[2]), t: Math.random(), speed: 0.12 + Math.random() * 0.2, life: 10 + Math.random() * 14 };
+  const { a: A, b: B } = ARCS[i];
+  const ang = A.angleTo(B);
+  const lift = 1 + Math.min(0.45, ang * 0.35);
+  for (let s = 0; s < ARC_SEG; s++) {
+    for (let e = 0; e < 2; e++) {
+      const f = (s + e) / ARC_SEG;
+      const p = new THREE.Vector3().copy(A).multiplyScalar(Math.sin((1 - f) * ang)).addScaledVector(B, Math.sin(f * ang)).divideScalar(Math.sin(ang) || 1);
+      p.normalize().multiplyScalar(RADIUS * (1 + (lift - 1) * Math.sin(f * Math.PI)));
+      const k = ((i * ARC_SEG + s) * 2 + e) * 3;
+      arcPos[k] = p.x; arcPos[k + 1] = p.y; arcPos[k + 2] = p.z;
+      const c = 0.25 + 0.75 * Math.sin(f * Math.PI);
+      arcCol[k] = c * 1.0; arcCol[k + 1] = c * 0.7; arcCol[k + 2] = c * 0.4;
+    }
+  }
+  arcGeo.attributes.position.needsUpdate = true;
+  arcGeo.attributes.color.needsUpdate = true;
+}
+for (let i = 0; i < ARC_N; i++) rollArc(i);
+
+// --- satellites --------------------------------------------------------------
+// Kepler-ish circular orbits: each has a radius, inclination, node and phase.
+// Positions are computed on the CPU (40 objects is nothing) and pushed into a
+// Points buffer, with a short fading trail behind each.
+const SAT_N = 40, TRAIL = 18;
+const sats = Array.from({ length: SAT_N }, (_, i) => ({
+  r: RADIUS * (1.12 + Math.random() * 0.28), inc: (Math.random() - 0.5) * Math.PI * 0.9,
+  node: Math.random() * Math.PI * 2, phase: Math.random() * Math.PI * 2,
+  w: (0.25 + Math.random() * 0.35) * (Math.random() < 0.15 ? 2.2 : 1),
+  hist: [], iss: i === 0,
+}));
+const satGeo = new THREE.BufferGeometry();
+const satPos = new Float32Array(SAT_N * 3);
+satGeo.setAttribute("position", new THREE.BufferAttribute(satPos, 3));
+earth.add(new THREE.Points(satGeo, new THREE.PointsMaterial({
+  color: 0xffffff, size: 0.28, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })));
+const trailGeo = new THREE.BufferGeometry();
+const trailPos = new Float32Array(SAT_N * (TRAIL - 1) * 2 * 3);
+const trailCol = new Float32Array(SAT_N * (TRAIL - 1) * 2 * 3);
+trailGeo.setAttribute("position", new THREE.BufferAttribute(trailPos, 3));
+trailGeo.setAttribute("color", new THREE.BufferAttribute(trailCol, 3));
+earth.add(new THREE.LineSegments(trailGeo, new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false })));
+
+function satPosition(s, t) {
+  const a = s.phase + t * s.w;
+  const x = Math.cos(a) * s.r, y = Math.sin(a) * s.r;
+  // Rotate the orbital plane: inclination about x, then node about y.
+  const y1 = y * Math.cos(s.inc), z1 = y * Math.sin(s.inc);
+  return new THREE.Vector3(x * Math.cos(s.node) + z1 * Math.sin(s.node), y1, -x * Math.sin(s.node) + z1 * Math.cos(s.node));
+}
+let satTick = 0;
+function updateSats(t, dt) {
+  satTick += dt;
+  const record = satTick > 0.06;
+  if (record) satTick = 0;
+  for (let i = 0; i < SAT_N; i++) {
+    const s = sats[i], p = satPosition(s, t);
+    satPos[i * 3] = p.x; satPos[i * 3 + 1] = p.y; satPos[i * 3 + 2] = p.z;
+    if (record) { s.hist.push(p); if (s.hist.length > TRAIL) s.hist.shift(); }
+    for (let k = 0; k < TRAIL - 1; k++) {
+      const a = s.hist[k] || p, b = s.hist[k + 1] || p;
+      const base = (i * (TRAIL - 1) + k) * 6;
+      trailPos[base] = a.x; trailPos[base + 1] = a.y; trailPos[base + 2] = a.z;
+      trailPos[base + 3] = b.x; trailPos[base + 4] = b.y; trailPos[base + 5] = b.z;
+      const f = k / TRAIL;
+      const c = s.iss ? [1, 0.35, 0.3] : [0.6, 0.75, 1];
+      for (let e = 0; e < 2; e++) { trailCol[base + e * 3] = c[0] * f; trailCol[base + e * 3 + 1] = c[1] * f; trailCol[base + e * 3 + 2] = c[2] * f; }
+    }
+  }
+  satGeo.attributes.position.needsUpdate = true;
+  trailGeo.attributes.position.needsUpdate = true;
+  trailGeo.attributes.color.needsUpdate = true;
+}
+
+// --- overlay: reticles, leaders, pointer ------------------------------------
+const ov = document.getElementById("overlay");
+const octx = ov.getContext("2d");
+const ODPR = Math.min(devicePixelRatio, 1.5);
+function sizeOverlay() {
+  ov.width = innerWidth * ODPR; ov.height = innerHeight * ODPR;
+  ov.style.width = innerWidth + "px"; ov.style.height = innerHeight + "px";
+  octx.setTransform(ODPR, 0, 0, ODPR, 0, 0);
+}
+sizeOverlay();
+
+// Targets: a few cities under surveillance at any time, swapped every so
+// often, plus one pinned by ghostTarget(). Each is projected every frame and
+// hidden while on the far side of the globe.
+const targets = [];
+function pickTarget(pinned) {
+  const c = pinned || CITIES[Math.floor(Math.random() * CITIES.length)];
+  return { name: c[0], lat: c[1], lon: c[2], dir: latLonToDir(c[1], c[2]), born: uniforms.uTime.value,
+           life: pinned ? 45 : 8 + Math.random() * 10, pinned: !!pinned, x: 0, y: 0, vis: false,
+           id: "TGT-" + Math.floor(1000 + Math.random() * 9000) };
+}
+for (let i = 0; i < 3; i++) targets.push(pickTarget());
+const _w = new THREE.Vector3(), _n = new THREE.Vector3(), _c = new THREE.Vector3();
+function projectTarget(t) {
+  _w.copy(t.dir).multiplyScalar(RADIUS); earth.localToWorld(_w);
+  earth.getWorldPosition(_c);
+  _n.copy(_w).sub(_c).normalize();
+  const toCam = camera.position.clone().sub(_c).normalize();
+  t.facing = _n.dot(toCam);
+  t.vis = t.facing > 0.12;
+  _w.project(camera);
+  t.x = (_w.x + 1) / 2 * innerWidth; t.y = (1 - _w.y) / 2 * innerHeight;
+}
+
+const pointer = { x: -999, y: -999, active: false };
 const ndc = new THREE.Vector2(0, 0);
 let pushTarget = 0;
-window.addEventListener("pointermove", (e) => {
-  ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
-  ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  pushTarget = 1;
+addEventListener("pointermove", (e) => {
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
+  ndc.x = (e.clientX / innerWidth) * 2 - 1; ndc.y = -(e.clientY / innerHeight) * 2 + 1; pushTarget = 1;
 });
-window.addEventListener("pointerleave", () => { pushTarget = 0; });
+addEventListener("pointerleave", () => { pointer.active = false; pushTarget = 0; });
 
+function drawOverlay(t, level, accentHex) {
+  octx.clearRect(0, 0, innerWidth, innerHeight);
+  octx.font = "9px Consolas, monospace"; octx.textBaseline = "middle";
+  for (const tg of targets) {
+    if (!tg.vis) continue;
+    const age = t - tg.born;
+    const locked = age > 1.6;
+    const col = tg.pinned ? accentHex : (locked ? "#ff3b3b" : "rgba(255,140,140,0.8)");
+    const r = (locked ? 11 : 22 - age * 7) + level * 5;
+    octx.strokeStyle = col; octx.lineWidth = 1; octx.globalAlpha = Math.min(1, tg.facing * 3);
+    octx.beginPath(); octx.arc(tg.x, tg.y, r, 0, Math.PI * 2); octx.stroke();
+    octx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const a = t * (locked ? 0.6 : 3) + i * Math.PI / 2;
+      octx.moveTo(tg.x + Math.cos(a) * (r + 3), tg.y + Math.sin(a) * (r + 3));
+      octx.lineTo(tg.x + Math.cos(a) * (r + 8), tg.y + Math.sin(a) * (r + 8));
+    }
+    octx.stroke();
+    octx.fillStyle = col; octx.fillRect(tg.x - 1, tg.y - 1, 2, 2);
+    // Leader to a label box, up-right or up-left depending on screen half.
+    const dirx = tg.x > innerWidth * 0.62 ? -1 : 1;
+    const lx = tg.x + dirx * (r + 26), ly = tg.y - 26, lx2 = lx + dirx * 92;
+    octx.beginPath(); octx.moveTo(tg.x + dirx * r, tg.y - r * 0.2); octx.lineTo(lx, ly); octx.lineTo(lx2, ly); octx.stroke();
+    octx.textAlign = dirx > 0 ? "left" : "right";
+    octx.fillStyle = "#e8eef8"; octx.fillText(tg.name, lx + dirx * 2, ly - 8);
+    octx.fillStyle = col; octx.fillText(locked ? (tg.pinned ? "TARGET" : "LOCKED") : "ACQUIRING", lx + dirx * 2, ly + 8);
+    octx.fillStyle = "#6b768c";
+    octx.fillText(Math.abs(tg.lat).toFixed(2) + (tg.lat < 0 ? "S " : "N ") + Math.abs(tg.lon).toFixed(2) + (tg.lon < 0 ? "W" : "E"), lx + dirx * 2, ly + 20);
+    octx.globalAlpha = 1;
+  }
+  if (pointer.active) {
+    octx.strokeStyle = "rgba(255,255,255,0.10)"; octx.lineWidth = 1;
+    octx.beginPath(); octx.moveTo(0, pointer.y + 0.5); octx.lineTo(innerWidth, pointer.y + 0.5);
+    octx.moveTo(pointer.x + 0.5, 0); octx.lineTo(pointer.x + 0.5, innerHeight); octx.stroke();
+    octx.strokeStyle = accentHex; octx.beginPath(); octx.arc(pointer.x, pointer.y, 14 + level * 6, 0, Math.PI * 2); octx.stroke();
+  }
+}
+
+// --- panels -------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const LOG_MAX = 16;
+const logEl = $("log");
+function log(text, cls) {
+  const d = document.createElement("div");
+  d.textContent = new Date().toISOString().slice(11, 19) + "  " + text;
+  if (cls) d.className = cls;
+  logEl.appendChild(d);
+  while (logEl.children.length > LOG_MAX) logEl.removeChild(logEl.firstChild);
+}
+const LOG_TEMPLATES = [
+  () => `FEED ${hexId()} ACQUIRED · ${randCity()}`,
+  () => `MATCH ${(55 + Math.random() * 44).toFixed(1)}% · ${randCity()} SECTOR`,
+  () => `AIS CONTACT ${hexId()} · HDG ${Math.floor(Math.random() * 360)}`,
+  () => `ADS-B ${hexId()} FL${Math.floor(200 + Math.random() * 230)}`,
+  () => `ORBITAL PASS ${Math.floor(100 + Math.random() * 900)} · TLE REFRESH`,
+  () => `CCTV ${hexId()} · FRAME SYNC`,
+  () => `SIGINT NODE ${hexId()} · ONLINE`,
+  () => `TRIANGULATING ${randCity()} · ${(Math.random() * 40).toFixed(1)} MI`,
+];
+const hexId = () => Math.floor(Math.random() * 0xffff).toString(16).toUpperCase().padStart(4, "0");
+const randCity = () => CITIES[Math.floor(Math.random() * CITIES.length)][0];
+
+const wave = $("wave"), wctx = wave.getContext("2d");
+const waveform = new Array(96).fill(0);
+function drawWave(level, accentHex) {
+  wctx.clearRect(0, 0, wave.width, wave.height);
+  const bw = wave.width / waveform.length;
+  for (let i = 0; i < waveform.length; i++) {
+    const h = 3 + waveform[i] * (wave.height - 6);
+    wctx.fillStyle = i === waveform.length - 1 ? accentHex : "rgba(150,165,190,0.45)";
+    wctx.fillRect(i * bw, (wave.height - h) / 2, Math.max(1, bw - 2), h);
+  }
+}
+
+let stateWord = "Booting", stateDetail = "";
+let matches = 0, matchTarget = 0, dist = 12.1;
+
+// --- inputs from Python --------------------------------------------------------
+let targetColor = ACCENT.Booting.slice();
+window.updateGhostState = function (word, detail) {
+  if (word !== stateWord) log(`STATE ${word.toUpperCase()}`, word === "Thinking" || word === "Working" ? "hot" : "");
+  stateWord = word; stateDetail = detail || "";
+  targetColor = (ACCENT[word] || ACCENT.Booting).slice();
+  $("word").textContent = word;
+  $("word").style.color = word === "Listening" ? "var(--orange)" : hex(targetColor);
+  $("r-status").textContent = { Listening: "STANDBY · AUDIO", Thinking: "CORRELATING", Working: "EXECUTING",
+                                Speaking: "TRANSMITTING", Offline: "LINK LOST", Booting: "INITIALISING" }[word] || word.toUpperCase();
+  $("detail").textContent = stateDetail;
+  $("track-word").textContent = word === "Offline" ? "NO TRACK" : "TRACK";
+  if (stateDetail) log(stateDetail.toUpperCase().slice(0, 44), "hot");
+  matchTarget = word === "Thinking" || word === "Working" ? 200 + Math.random() * 600 : 8 + Math.random() * 40;
+};
+let levelTarget = 0;
+window.ghostLevel = function (v) { levelTarget = Math.max(0, Math.min(1, v || 0)); };
+
+// Turn the globe so the place faces the camera and pin a reticle on it.
+let yawTarget = null, tiltTarget = null;
+window.ghostTarget = function (lat, lon, label) {
+  const name = (label || "TARGET").toUpperCase();
+  targets.unshift(pickTarget([name, lat, lon]));
+  while (targets.length > 4) targets.pop();
+  // The camera sits on +z. A local direction (cos lo, 0, -sin lo) rotated by
+  // yaw about y has z' = -sin(yaw + lo), which is 1 when yaw = -pi/2 - lo.
+  // Tilt about x by the latitude then brings the point to the centre.
+  const lo = lon * Math.PI / 180;
+  yawTarget = -Math.PI / 2 - lo;
+  tiltTarget = lat * Math.PI / 180;
+  log(`TARGET ${name} · ${Math.abs(lat).toFixed(2)}${lat < 0 ? "S" : "N"} ${Math.abs(lon).toFixed(2)}${lon < 0 ? "W" : "E"}`, "red");
+  $("c-lat").textContent = lat.toFixed(4); $("c-lon").textContent = lon.toFixed(4);
+};
+
+// --- loop ------------------------------------------------------------------------
 const ray = new THREE.Raycaster();
-const pointerDir = new THREE.Vector3(0, 0, 1);
-const tmp = new THREE.Vector3();
-
-// --- loop -------------------------------------------------------------------
+const pointerDir = new THREE.Vector3(0, 0, 1), tmp = new THREE.Vector3();
 const clock = new THREE.Clock();
-let level = 0, push = 0;
+let level = 0, push = 0, waveTick = 0, logTick = 0, uiTick = 0, arcTick = 0;
+log("GOD'S EYE ONLINE · BUILDING GLOBE", "hot");
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
-  uniforms.uTime.value += dt;
+  const t = uniforms.uTime.value += dt;
+  uniforms.uBoot.value = Math.min(1, uniforms.uBoot.value + dt * 0.35);
 
-  // Asymmetric smoothing: snap up on a syllable, fall away slowly. Equal rates
-  // in both directions read as mushy and lag the voice.
   const rate = levelTarget > level ? 14 : 4;
   level += (levelTarget - level) * Math.min(1, dt * rate);
-  uniforms.uLevel.value = level;
-  levelTarget *= 0.92;      // decay if Python stops sending (silence)
+  uniforms.uLevel.value = level; levelTarget *= 0.92;
+  push += (pushTarget - push) * Math.min(1, dt * 6); uniforms.uPush.value = push;
 
-  push += (pushTarget - push) * Math.min(1, dt * 6);
-  uniforms.uPush.value = push;
-
-  // Project the cursor onto the sphere's direction space.
+  // Pointer direction in the globe's local frame, so repulsion follows the
+  // cursor even as the group rotates.
   ray.setFromCamera(ndc, camera);
-  tmp.copy(ray.ray.direction).multiplyScalar(40).add(ray.ray.origin);
+  tmp.copy(ray.ray.direction).multiplyScalar(44).add(ray.ray.origin);
+  earth.worldToLocal(tmp);
   pointerDir.lerp(tmp.normalize(), Math.min(1, dt * 9));
   uniforms.uPointer.value.copy(pointerDir);
 
-  // Colour eased rather than snapped, so state changes feel like a mood shift.
   const c = uniforms.uColor.value;
   c.x += (targetColor[0] - c.x) * Math.min(1, dt * 2.5);
   c.y += (targetColor[1] - c.y) * Math.min(1, dt * 2.5);
   c.z += (targetColor[2] - c.z) * Math.min(1, dt * 2.5);
+  const accentHex = hex([c.x, c.y, c.z]);
 
-  sphere.rotation.y += dt * 0.045;
-  sphere.rotation.x = Math.sin(uniforms.uTime.value * 0.13) * 0.14;
+  // Rotation: slow drift, or ease toward a requested target, then resume.
+  if (yawTarget !== null) {
+    let d = yawTarget - earth.rotation.y;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    earth.rotation.y += d * Math.min(1, dt * 2.2);
+    if (Math.abs(d) < 0.01) yawTarget = null;
+  } else {
+    earth.rotation.y += dt * (stateWord === "Thinking" ? 0.12 : 0.04);
+  }
+  if (tiltTarget !== null) {
+    const d = tiltTarget - earth.rotation.x;
+    earth.rotation.x += d * Math.min(1, dt * 2.2);
+    if (Math.abs(d) < 0.01) tiltTarget = null;
+  }
+  uniforms.uScan.value += dt * (stateWord === "Thinking" || stateWord === "Working" ? 1.6 : 0.5);
+
+  updateSats(t, dt);
+  for (let i = 0; i < ARC_N; i++) {
+    const a = ARCS[i]; a.t = (a.t + dt * a.speed) % 1; a.life -= dt;
+    if (a.life < 0) rollArc(i);
+    const s = Math.min(ARC_SEG - 1, Math.floor(a.t * ARC_SEG));
+    const k = (i * ARC_SEG + s) * 6;
+    pulsePos[i * 3] = arcPos[k]; pulsePos[i * 3 + 1] = arcPos[k + 1]; pulsePos[i * 3 + 2] = arcPos[k + 2];
+  }
+  pulseGeo.attributes.position.needsUpdate = true;
+
+  for (let i = targets.length - 1; i >= 0; i--) {
+    const tg = targets[i];
+    if (t - tg.born > tg.life) { targets.splice(i, 1); if (targets.length < 3) targets.push(pickTarget()); continue; }
+    projectTarget(tg);
+  }
 
   renderer.render(scene, camera);
+  drawOverlay(t, level, accentHex);
+
+  waveTick += dt;
+  if (waveTick > 0.04) { waveTick = 0; waveform.push(level); waveform.shift(); drawWave(level, accentHex); }
+  logTick += dt;
+  if (logTick > (stateWord === "Thinking" ? 0.35 : 1.4) + Math.random()) { logTick = 0; log(LOG_TEMPLATES[Math.floor(Math.random() * LOG_TEMPLATES.length)]()); }
+  uiTick += dt;
+  if (uiTick > 0.2) {
+    uiTick = 0;
+    matches += (matchTarget - matches) * 0.15 + (Math.random() - 0.5) * 3;
+    dist += (Math.random() - 0.5) * 0.4; dist = Math.max(0.3, Math.min(99, dist));
+    $("matches").textContent = Math.max(0, Math.round(matches));
+    $("dist").textContent = dist.toFixed(1) + " MI";
+    $("r-audio").textContent = level > 0.03 ? (70 + level * 29).toFixed(0) + "%" : "--";
+    $("r-feeds").textContent = `${Math.round(matches / 3 + 12)} / ${SAT_N + CITIES.length}`;
+    const lead = targets.find(x => x.vis);
+    $("r-track").textContent = lead ? `${lead.name} · ${lead.id}` : "--";
+    $("clock").textContent = new Date().toISOString().slice(11, 19) + "Z";
+    if (yawTarget === null && lead && !lead.pinned) { $("c-lat").textContent = lead.lat.toFixed(4); $("c-lon").textContent = lead.lon.toFixed(4); }
+  }
 }
 animate();
 
-window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); sizeOverlay();
 });
 </script>
 </body>

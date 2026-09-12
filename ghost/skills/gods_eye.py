@@ -46,6 +46,12 @@ LAYERS = {"ships": "a", "vessels": "a", "ais": "a",
           "satellites": "s", "cables": "u", "undersea cables": "u",
           "traffic": "t"}
 
+# Set by main.py to GhostUI.target once the face exists. The face is a point
+# cloud globe of its own, so a request to look at a place turns it there too.
+# Kept as a module attribute rather than an import of ui3d: skills must stay
+# importable without a window, or load_all reports them disabled.
+face_target = None
+
 # Not every layer is useful at every altitude. Flights and satellites read
 # fine from orbit; traffic and cctv only mean anything over a city.
 DEFAULT_LAYERS = "f.s"
@@ -127,6 +133,11 @@ def _hash(lat, lon, alt, heading, pitch, style, layers, hud):
 def open_gods_eye(place: str, lat: float, lon: float, alt: float = 3000,
                   heading: float = 0, pitch: float = -45, style: str = "normal",
                   layers: str = "", hud: bool = True):
+    if face_target:
+        try:
+            face_target(lat, lon, place)
+        except Exception:
+            pass
     if not GEV.is_dir():
         return f"God's Eye View checkout missing at {GEV}."
     if not _port_open():
