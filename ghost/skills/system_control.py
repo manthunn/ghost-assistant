@@ -150,3 +150,25 @@ def run_command(command: str):
                        capture_output=True, text=True, timeout=60)
     out = (r.stdout or r.stderr or "").strip()
     return out[:1500] or "Done. No output."
+
+@register({"name": "minimize_window",
+    "description": "Minimize the currently focused/active window only, leaving every "
+                    "other open window untouched. Use for 'minimize this window', not "
+                    "'minimize everything'.",
+    "parameters": {"type": "object", "properties": {}, "required": []}})
+def minimize_window():
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.WinDLL("user32", use_last_error=True)
+    # Unprototyped calls truncate the 64-bit HWND to a C int and silently fail -
+    # see screenshot.py's _user32() for the same fix.
+    u.GetForegroundWindow.restype = wintypes.HWND
+    u.GetForegroundWindow.argtypes = []
+    u.ShowWindow.restype = wintypes.BOOL
+    u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    hwnd = u.GetForegroundWindow()
+    if not hwnd:
+        return "No focused window to minimize."
+    SW_MINIMIZE = 6
+    u.ShowWindow(hwnd, SW_MINIMIZE)
+    return "Minimized the focused window."
