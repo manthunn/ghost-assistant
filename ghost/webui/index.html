@@ -18,24 +18,8 @@
   .big { font-family: 'Bahnschrift SemiCondensed', 'Bahnschrift', 'Arial Narrow', sans-serif;
          font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 
-  /* Orange band across the top, the film's "processing" strip. */
-  #band {
-    position: fixed; left: 0; right: 0; top: 0; height: 46px; z-index: 7; pointer-events: none;
-    background: linear-gradient(90deg, rgba(240,110,40,.22), rgba(240,140,60,.10) 55%, rgba(240,110,40,.20));
-    border-bottom: 1px solid rgba(240,150,70,.35);
-    -webkit-app-region: drag;
-  }
-  #band::after {
-    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 100%;
-    background: repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px);
-  }
-  #band-title { left: 30px; top: 12px; font-size: 20px; color: #ffd8b0; text-shadow: 0 0 14px rgba(240,140,60,.6); }
-  #band-title small { font-size: 10px; letter-spacing: .3em; color: #f0a63c; margin-left: 18px; vertical-align: middle; }
-  #band-right { right: 30px; top: 11px; text-align: right; font-size: 10px; letter-spacing: .22em; color: #ffcf9e; }
-  #band-right .sub { display: block; margin-top: 3px; font-size: 9px; color: #c98a4a; }
-
   /* Left column: profile readout. */
-  #profile { left: 30px; top: 84px; width: 300px; }
+  #profile { left: 30px; top: 40px; width: 300px; }
   #profile .hr { height: 1px; background: linear-gradient(90deg, rgba(240,166,60,.7), transparent); margin: 6px 0 10px; }
   #word { font-size: 30px; line-height: 1; color: var(--orange); text-shadow: 0 0 18px rgba(240,166,60,.45); transition: color .6s; }
   #rows { margin-top: 12px; font-size: 10px; letter-spacing: .12em; line-height: 17px; }
@@ -55,7 +39,7 @@
   @keyframes blink { to { opacity: .2; } }
 
   /* Right column: event log. */
-  #log { right: 30px; top: 84px; width: 330px; text-align: right; font-size: 9.5px; letter-spacing: .08em;
+  #log { right: 30px; top: 40px; width: 330px; text-align: right; font-size: 9.5px; letter-spacing: .08em;
          line-height: 15px; color: var(--dim); }
   #log div { white-space: nowrap; overflow: hidden; }
   #log div:last-child { color: var(--text); }
@@ -66,11 +50,36 @@
   #coords { right: 30px; bottom: 34px; text-align: right; font-size: 10px; letter-spacing: .18em; color: var(--dim); line-height: 16px; }
   #coords b { color: var(--text); font-weight: normal; }
 
+  /* City card: opens under the profile when a city is clicked. */
+  #card { left: 30px; top: 250px; width: 330px; max-height: calc(100vh - 400px); overflow-y: auto;
+          pointer-events: auto; padding: 12px 14px 14px; box-sizing: border-box;
+          background: rgba(6,9,16,.78); border: 1px solid rgba(160,180,220,.18);
+          border-left: 2px solid var(--orange); backdrop-filter: blur(4px);
+          scrollbar-width: thin; scrollbar-color: #2a3345 transparent; }
+  #card[hidden] { display: none; }
+  #card .head { display: flex; justify-content: space-between; align-items: baseline; }
+  #card .name { font-size: 22px; line-height: 1; color: #f3f6fb; }
+  #card .x { font-size: 11px; letter-spacing: .2em; color: var(--dim); cursor: pointer; padding: 2px 4px; }
+  #card .x:hover { color: var(--text); }
+  #card .desc { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--orange); margin-top: 4px; }
+  #card .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; margin: 10px 0 8px; font-size: 10px; letter-spacing: .1em; }
+  #card .grid b { display: block; color: var(--dim); font-weight: normal; font-size: 8.5px; letter-spacing: .22em; }
+  #card .grid span { color: var(--text); }
+  #card .sum { font-size: 10.5px; line-height: 15px; color: #a9b4c7; letter-spacing: .02em;
+               display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+  #card .sec { margin: 12px 0 6px; font-size: 8.5px; letter-spacing: .28em; color: var(--dim); text-transform: uppercase;
+               border-bottom: 1px solid rgba(160,180,220,.14); padding-bottom: 4px; }
+  #card .news div { font-size: 10.5px; line-height: 14px; color: #d3dbe8; margin: 0 0 7px; cursor: pointer; }
+  #card .news div:hover { color: #fff; }
+  #card .news small { display: block; font-size: 8.5px; letter-spacing: .18em; color: var(--dim); margin-top: 2px; text-transform: uppercase; }
+  #card .wait { font-size: 10px; letter-spacing: .22em; color: var(--orange); animation: blink 1s steps(2) infinite; }
+  #card .err { font-size: 9px; letter-spacing: .12em; color: #6b5040; margin-top: 8px; }
+
   /* Corner brackets framing the whole screen. */
   .corner { position: fixed; z-index: 7; width: 26px; height: 26px; pointer-events: none;
             border-color: rgba(200,215,240,.35); border-style: solid; border-width: 0; }
-  .corner.tl { left: 18px; top: 58px; border-left-width: 1px; border-top-width: 1px; }
-  .corner.tr { right: 18px; top: 58px; border-right-width: 1px; border-top-width: 1px; }
+  .corner.tl { left: 18px; top: 18px; border-left-width: 1px; border-top-width: 1px; }
+  .corner.tr { right: 18px; top: 18px; border-right-width: 1px; border-top-width: 1px; }
   .corner.bl { left: 18px; bottom: 18px; border-left-width: 1px; border-bottom-width: 1px; }
   .corner.br { right: 18px; bottom: 18px; border-right-width: 1px; border-bottom-width: 1px; }
 
@@ -91,9 +100,6 @@
 <div id="vignette"></div>
 <div id="sweep"></div>
 <div id="grain"></div>
-<div id="band"></div>
-<div class="panel big" id="band-title">God's Eye <small>// processing data streams</small></div>
-<div class="panel" id="band-right"><span id="clock">00:00:00Z</span><span class="sub">orbital pass 118 · desc</span></div>
 <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
 
 <div class="panel" id="profile">
@@ -116,11 +122,22 @@
   <div class="track"><i></i><span id="track-word">TRACK</span></div>
 </div>
 
+<div class="panel" id="card" hidden>
+  <div class="head"><div class="name big" id="cd-name"></div><div class="x" id="cd-close">CLOSE</div></div>
+  <div class="desc" id="cd-desc"></div>
+  <div class="grid" id="cd-grid"></div>
+  <div class="sum" id="cd-sum"></div>
+  <div class="sec">Latest</div>
+  <div class="news" id="cd-news"></div>
+  <div class="err" id="cd-err"></div>
+</div>
+
 <div class="panel" id="log"></div>
 <div class="panel" id="coords">
   <div>LAT <b id="c-lat">--</b></div>
   <div>LONG <b id="c-lon">--</b></div>
   <div>ALT <b>412 KM</b> · PASS <b>DESC-118</b></div>
+  <div>UTC <b id="clock">00:00:00Z</b></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
@@ -137,7 +154,11 @@
 // Cesium, baked in as base64 so the face renders offline and instantly.
 //
 // The globe can be dragged to turn it and zoomed with the wheel; after a few
-// idle seconds it resumes its slow drift.
+// idle seconds it resumes its slow drift. Clicking a city (a warm dot) opens
+// a card with a Wikipedia summary, local time and weather, and the latest
+// headlines. The data comes through pywebview's js_api (see city_brief.py)
+// because file:// pages cannot fetch Google News directly; in a plain browser
+// the card falls back to the two sources that allow CORS and skips news.
 //
 // Inputs from Python (ui3d.py):
 //   window.updateGhostState(word, detail)   - state name, drives colour
@@ -462,19 +483,42 @@ function projectTarget(t) {
   t.x = (_w.x + 1) / 2 * innerWidth; t.y = (1 - _w.y) / 2 * innerHeight;
 }
 
+// Every city is projected each frame (36 dots, trivial) so hover and click
+// can hit-test against screen positions.
+const cityScreen = CITIES.map(([name, lat, lon]) => ({ name, lat, lon, dir: latLonToDir(lat, lon), x: 0, y: 0, vis: false, facing: 0 }));
+let hoverCity = null;
+function nearestCity(x, y, radius) {
+  let best = null, bd = radius * radius;
+  for (const c of cityScreen) {
+    if (!c.vis) continue;
+    const d = (c.x - x) ** 2 + (c.y - y) ** 2;
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best;
+}
+
 // Drag turns the globe, the wheel zooms, and after a few idle seconds the
-// slow drift resumes. Velocity is kept so a flick keeps spinning.
-const pointer = { x: -999, y: -999, active: false, down: false, lx: 0, ly: 0, vx: 0, vy: 0, idle: 0 };
+// slow drift resumes. Velocity is kept so a flick keeps spinning. A press
+// that moves less than a few pixels is a click, and a click on a city opens
+// its card.
+const pointer = { x: -999, y: -999, active: false, down: false, lx: 0, ly: 0, vx: 0, vy: 0, idle: 0, sx: 0, sy: 0, moved: 0 };
 const DRAG = 0.0045;
 addEventListener("pointerdown", (e) => {
+  if (e.target.closest && e.target.closest("#card")) return;
   pointer.down = true; pointer.lx = e.clientX; pointer.ly = e.clientY; pointer.vx = pointer.vy = 0;
+  pointer.sx = e.clientX; pointer.sy = e.clientY; pointer.moved = 0;
   yawTarget = tiltTarget = null;
   document.body.style.cursor = "grabbing";
 });
 addEventListener("pointermove", (e) => {
   pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
-  if (!pointer.down) return;
+  if (!pointer.down) {
+    hoverCity = nearestCity(e.clientX, e.clientY, 16);
+    document.body.style.cursor = hoverCity ? "pointer" : "grab";
+    return;
+  }
   const dx = e.clientX - pointer.lx, dy = e.clientY - pointer.ly;
+  pointer.moved += Math.abs(dx) + Math.abs(dy);
   pointer.lx = e.clientX; pointer.ly = e.clientY;
   earth.rotation.y += dx * DRAG;
   earth.rotation.x = Math.max(-1.3, Math.min(1.3, earth.rotation.x + dy * DRAG));
@@ -483,8 +527,14 @@ addEventListener("pointermove", (e) => {
   pointer.vy = Math.max(-0.05, Math.min(0.05, dy * DRAG));
   pointer.idle = 0;
 });
-const release = () => { pointer.down = false; document.body.style.cursor = "grab"; };
-addEventListener("pointerup", release);
+const release = () => { pointer.down = false; document.body.style.cursor = hoverCity ? "pointer" : "grab"; };
+addEventListener("pointerup", (e) => {
+  const wasDown = pointer.down;
+  release();
+  if (!wasDown || pointer.moved > 6) return;
+  const c = nearestCity(e.clientX, e.clientY, 16);
+  if (c) openCity(c.name, c.lat, c.lon, false);
+});
 addEventListener("pointercancel", release);
 addEventListener("pointerleave", () => { pointer.active = false; release(); });
 addEventListener("wheel", (e) => {
@@ -522,6 +572,12 @@ function drawOverlay(t, level, accentHex) {
     octx.fillStyle = "#6b768c";
     octx.fillText(Math.abs(tg.lat).toFixed(2) + (tg.lat < 0 ? "S " : "N ") + Math.abs(tg.lon).toFixed(2) + (tg.lon < 0 ? "W" : "E"), lx + dirx * 2, ly + 20);
     octx.globalAlpha = 1;
+  }
+  if (hoverCity && hoverCity.vis) {
+    octx.strokeStyle = "#ffd9a0"; octx.lineWidth = 1;
+    octx.beginPath(); octx.arc(hoverCity.x, hoverCity.y, 7 + Math.sin(t * 6) * 1.5, 0, Math.PI * 2); octx.stroke();
+    octx.fillStyle = "#ffd9a0"; octx.textAlign = "left";
+    octx.fillText(hoverCity.name, hoverCity.x + 12, hoverCity.y);
   }
   if (pointer.active && !pointer.down) {
     octx.strokeStyle = "rgba(255,255,255,0.10)"; octx.lineWidth = 1;
@@ -588,20 +644,92 @@ window.updateGhostState = function (word, detail) {
 let levelTarget = 0;
 window.ghostLevel = function (v) { levelTarget = Math.max(0, Math.min(1, v || 0)); };
 
+// --- city card -------------------------------------------------------------------
+// One card at a time. A request that arrives while an older one is in flight
+// wins by sequence number, so a slow response for the previous city cannot
+// overwrite the current one.
+let cardSeq = 0;
+const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+
+async function fetchBrief(name, lat, lon) {
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.city_brief)
+    return await window.pywebview.api.city_brief(name, lat, lon);
+  // Browser fallback: the two sources that send CORS headers.
+  const out = { name, lat, lon, summary: "", description: "", weather: null, news: [], errors: ["news: needs Ghost"] };
+  try {
+    const w = await (await fetch("https://en.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(name))).json();
+    out.summary = w.extract || ""; out.description = w.description || "";
+  } catch (e) { out.errors.push("wiki: " + e.name); }
+  try {
+    const m = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&timezone=auto`)).json();
+    const off = m.utc_offset_seconds || 0;
+    const local = new Date(Date.now() + off * 1000).toISOString().slice(11, 16);
+    out.weather = { temp_c: m.current.temperature_2m, condition: "CODE " + m.current.weather_code, wind_kmh: m.current.wind_speed_10m,
+                    humidity: m.current.relative_humidity_2m, timezone: m.timezone, local_time: local, utc_offset: "UTC" + (off >= 0 ? "+" : "") + (off / 3600) };
+  } catch (e) { out.errors.push("weather: " + e.name); }
+  return out;
+}
+
+function renderCard(b) {
+  const w = b.weather;
+  $("cd-desc").textContent = b.description || "";
+  $("cd-grid").innerHTML = `
+    <div><b>LOCAL TIME</b><span>${w ? esc(w.local_time) + " " + esc(w.utc_offset) : "--"}</span></div>
+    <div><b>WEATHER</b><span>${w && w.temp_c != null ? Math.round(w.temp_c) + "°C · " + esc(w.condition) : "--"}</span></div>
+    <div><b>WIND / HUMIDITY</b><span>${w && w.wind_kmh != null ? Math.round(w.wind_kmh) + " KM/H · " + esc(w.humidity) + "%" : "--"}</span></div>
+    <div><b>POSITION</b><span>${Math.abs(b.lat).toFixed(2)}${b.lat < 0 ? "S" : "N"} ${Math.abs(b.lon).toFixed(2)}${b.lon < 0 ? "W" : "E"}</span></div>`;
+  $("cd-sum").textContent = b.summary || "No profile available.";
+  const news = $("cd-news");
+  news.innerHTML = "";
+  for (const n of b.news || []) {
+    const d = document.createElement("div");
+    d.innerHTML = esc(n.title) + `<small>${esc(n.source)}${n.age ? " · " + esc(n.age) : ""}</small>`;
+    if (n.link) d.addEventListener("click", () => { try { window.open(n.link, "_blank"); } catch (e) {} });
+    news.appendChild(d);
+  }
+  if (!(b.news || []).length) news.innerHTML = '<div style="color:var(--dim);cursor:default">No headlines.</div>';
+  $("cd-err").textContent = (b.errors || []).length ? "UNAVAILABLE: " + b.errors.join(", ") : "";
+}
+
+async function openCity(name, lat, lon, turn) {
+  const seq = ++cardSeq;
+  const card = $("card");
+  card.hidden = false;
+  $("cd-name").textContent = name;
+  $("cd-desc").textContent = "";
+  $("cd-grid").innerHTML = "";
+  $("cd-sum").innerHTML = '<span class="wait">ACQUIRING DOSSIER</span>';
+  $("cd-news").innerHTML = ""; $("cd-err").textContent = "";
+  if (!targets.some(tg => tg.pinned && tg.name === name.toUpperCase())) {
+    targets.unshift(pickTarget([name.toUpperCase(), lat, lon]));
+    while (targets.length > 4) targets.pop();
+  }
+  if (turn) {
+    const lo = lon * Math.PI / 180;
+    yawTarget = -Math.PI / 2 - lo; tiltTarget = lat * Math.PI / 180;
+  }
+  log(`DOSSIER ${name.toUpperCase()} · REQUESTED`, "hot");
+  $("c-lat").textContent = lat.toFixed(4); $("c-lon").textContent = lon.toFixed(4);
+  let brief;
+  try { brief = await fetchBrief(name, lat, lon); }
+  catch (e) { brief = { name, lat, lon, summary: "", news: [], errors: ["api: " + (e && e.name || "error")] }; }
+  if (seq !== cardSeq) return;
+  renderCard(brief);
+  log(`DOSSIER ${name.toUpperCase()} · ${(brief.news || []).length} HEADLINES`, "");
+}
+function closeCity() { $("card").hidden = true; cardSeq++; }
+$("cd-close").addEventListener("click", closeCity);
+addEventListener("keydown", (e) => { if (e.key === "Escape") closeCity(); });
+
 // Turn the globe so the place faces the camera and pin a reticle on it.
 let yawTarget = null, tiltTarget = null;
+// The camera sits on +z. A local direction (cos lo, 0, -sin lo) rotated by
+// yaw about y has z' = -sin(yaw + lo), which is 1 when yaw = -pi/2 - lo.
+// Tilt about x by the latitude then brings the point to the centre.
 window.ghostTarget = function (lat, lon, label) {
-  const name = (label || "TARGET").toUpperCase();
-  targets.unshift(pickTarget([name, lat, lon]));
-  while (targets.length > 4) targets.pop();
-  // The camera sits on +z. A local direction (cos lo, 0, -sin lo) rotated by
-  // yaw about y has z' = -sin(yaw + lo), which is 1 when yaw = -pi/2 - lo.
-  // Tilt about x by the latitude then brings the point to the centre.
-  const lo = lon * Math.PI / 180;
-  yawTarget = -Math.PI / 2 - lo;
-  tiltTarget = lat * Math.PI / 180;
-  log(`TARGET ${name} · ${Math.abs(lat).toFixed(2)}${lat < 0 ? "S" : "N"} ${Math.abs(lon).toFixed(2)}${lon < 0 ? "W" : "E"}`, "red");
-  $("c-lat").textContent = lat.toFixed(4); $("c-lon").textContent = lon.toFixed(4);
+  const name = (label || "Target");
+  log(`TARGET ${name.toUpperCase()} · ${Math.abs(lat).toFixed(2)}${lat < 0 ? "S" : "N"} ${Math.abs(lon).toFixed(2)}${lon < 0 ? "W" : "E"}`, "red");
+  openCity(name, lat, lon, true);
 };
 
 // --- loop ------------------------------------------------------------------------
@@ -659,6 +787,7 @@ function animate() {
   }
   pulseGeo.attributes.position.needsUpdate = true;
 
+  for (const c of cityScreen) projectTarget(c);
   for (let i = targets.length - 1; i >= 0; i--) {
     const tg = targets[i];
     if (t - tg.born > tg.life) { targets.splice(i, 1); if (targets.length < 3) targets.push(pickTarget()); continue; }

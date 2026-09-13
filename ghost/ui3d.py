@@ -2,6 +2,8 @@ import pathlib
 import threading
 import webview
 
+from . import city_brief
+
 STATE_WORDS = ("Listening", "Thinking", "Working", "Speaking", "Offline", "Booting")
 HTML_PATH = pathlib.Path(__file__).resolve().parent / "webui" / "index.html"
 
@@ -11,8 +13,19 @@ def _extract_word(state_text):
             return w
     return "Booting"
 
+class FaceAPI:
+    """Methods the face can call as `pywebview.api.<name>(...)`.
+
+    pywebview runs each call on its own thread and returns the value to the
+    page as a promise, so slow network work here never stalls the render loop.
+    """
+
+    def city_brief(self, name, lat, lon):
+        return city_brief.city_brief(str(name), float(lat), float(lon))
+
+
 class GhostUI:
-    """Fullscreen 3D universe status view, drop-in replacement for the old tkinter overlay."""
+    """Fullscreen God's Eye globe, drop-in replacement for the old tkinter overlay."""
 
     def __init__(self, on_close=None):
         self.on_close = on_close
@@ -20,7 +33,8 @@ class GhostUI:
         self._lock = threading.Lock()
         self._pending = ("Booting", "")
         self.window = webview.create_window(
-            "Ghost", str(HTML_PATH), fullscreen=True, frameless=True, easy_drag=False)
+            "Ghost", str(HTML_PATH), fullscreen=True, frameless=True, easy_drag=False,
+            js_api=FaceAPI())
         self.window.events.loaded += self._on_loaded
         self.window.events.closed += self._on_closed
 
