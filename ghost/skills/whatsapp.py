@@ -20,7 +20,7 @@ import re
 import time
 
 from . import register
-from .ui_automation import _find_window, _activate
+from .ui_automation import _find_window, _activate, _clear_edit
 
 WINDOW = "WhatsApp"
 APP_ID = r"5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App"
@@ -169,9 +169,12 @@ def _open_chat(win, contact):
         return "Couldn't find WhatsApp's search box."
     try:
         box.set_focus()
-        # Clear anything already typed, or the search stacks up.
+        # Clear anything already typed, or the search stacks up. A plain
+        # ^a{BACKSPACE} sometimes left stale characters when WhatsApp's own
+        # Backspace handling ate the keystroke; _clear_edit verifies instead
+        # of hoping it worked.
         from pywinauto.keyboard import send_keys
-        send_keys("^a{BACKSPACE}")
+        _clear_edit(box)
         time.sleep(0.3)
         box.type_keys(contact, with_spaces=True, pause=0.02)
         time.sleep(1.8)          # let results filter
