@@ -2,7 +2,7 @@
 
 A hands-free assistant for Windows. You talk to it, it talks back, and in between
 it reads your calendar and inbox, drives applications through UI Automation,
-searches the web, and remembers things between sessions. 62 tools across 23 skill
+searches the web, and remembers things between sessions. 64 tools across 24 skill
 modules, auto-discovered at boot.
 
 Built from scratch in Python.
@@ -42,7 +42,7 @@ billing reason.
 | Comms | `outlook` (read mail, compose drafts), `whatsapp` (read, send, call), `discord_chat` (channels and DMs), `notion` |
 | Time | `calendar_feed` (Google Calendar API), `moodle` (Moodle calendar + dashboard), `briefing`, `timers`, `todo` |
 | Information | `browser`, `ft_news`, `youtube`, `ai_chats`, `gods_eye` (live 3D globe: flights, ships, satellites) |
-| Core | `memory`, `agents`, `media`, `self_upgrade` (Ghost writes its own new skills) |
+| Core | `memory`, `agents`, `media`, `self_upgrade` (Ghost writes its own new skills), `dispatch_engine` (routes big jobs to specialist skills) |
 
 Some things worth calling out:
 
@@ -73,6 +73,15 @@ Some things worth calling out:
   checkout, over that spot with real flights and ships. Everything it can show is in the URL hash,
   so Ghost builds a share link instead of clicking through the page. The Vite
   server is a detached process for the same reason timers are.
+- **Dispatches big jobs.** "Fix this script and make it clean" is not a
+  one-tool request. `dispatch_task` classifies the request, scores it against a
+  registry of composite skills in `ghost/dispatch/skills.json` (persona,
+  constraints, procedure, output contract), resolves every input or asks one
+  question, runs the chosen skills as a small DAG (a chart skill feeding a
+  write-up skill, say) on Gemini or headless Claude Code, and saves the result
+  to `~/Documents/Ghost/dispatch/`. Ghost speaks the summary; the file holds
+  the work. Routing is deterministic arithmetic over the registry, so every
+  decision is reproducible offline in `tests/test_dispatch.py`.
 - **Refuses to guess.** Skills that can't see something say so — a collapsed
   Outlook mailbox, a login-gated page, a calendar that moved — rather than
   reporting an absence they can't actually verify.
@@ -94,7 +103,9 @@ ghost-assistant/
 │   ├── alarm_runner.py  # detached one-shot alerter, outlives Ghost closing
 │   ├── ui3d.py          # pywebview window
 │   ├── webui/           # God's Eye point-cloud Earth that reacts to Ghost's voice
-│   └── skills/          # 22 auto-loaded modules, 60 registered tools
+│   ├── dispatch/        # skill dispatch engine: classify, match, plan, run a DAG
+│   └── skills/          # 24 auto-loaded modules, 64 registered tools
+├── tests/               # offline unit tests: py -m unittest discover -s tests
 ├── docs/TRIED_AND_SHELVED.md
 └── .env                 # keys — never committed
 ```
@@ -185,7 +196,7 @@ Say **"goodbye ghost"** to exit.
 
 - [ ] Scheduled/background runs (currently on-demand or triggered by a session gap)
 - [ ] Email sending — compose-only today; new Outlook has no COM, so this needs Microsoft Graph
-- [ ] Cross-AI delegation to non-Gemini models
+- [x] Cross-AI delegation to non-Gemini models (dispatch skills can run on headless Claude Code)
 
 ## License
 

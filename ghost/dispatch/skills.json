@@ -1,0 +1,143 @@
+[
+  {
+    "skill_id": "code.refactor_audit",
+    "version": "1.2",
+    "description": "Refactor source for clarity and idiom while auditing for security and correctness defects.",
+    "priority": 80,
+    "backend": "claude",
+    "triggers": {
+      "domains": ["software.code"],
+      "actions": ["transform", "validate"],
+      "keywords": ["fix", "clean", "refactor", "lint", "secure", "audit", "bug", "tidy", "improve"],
+      "patterns": ["\\b(make|get) (it|this) (clean|better|safe)\\b"],
+      "artifact_types": ["code"],
+      "negative": ["explain only", "don't change", "do not modify", "just explain"]
+    },
+    "semantic_anchor": "The user has working or nearly working code and wants it restructured, cleaned, made idiomatic, and checked for security or correctness problems, with behavior preserved.",
+    "inputs": [
+      { "name": "source_code", "type": "code", "required": true, "source": ["artifact", "context"],
+        "clarification_prompt": "Which file or code should be fixed? Read it and pass it as a code artifact." },
+      { "name": "language", "type": "enum", "required": true, "source": ["artifact", "default"],
+        "artifact_field": "lang", "default": "auto-detect" },
+      { "name": "preserve_behavior", "type": "bool", "required": false, "source": ["context", "default"], "default": true },
+      { "name": "test_suite", "type": "code", "required": false, "source": ["context"] },
+      { "name": "style_guide", "type": "text", "required": false, "source": ["context", "default"], "default": "language community standard" }
+    ],
+    "outputs": [
+      { "name": "refactored_code", "type": "code", "pass_full": true },
+      { "name": "findings", "type": "table" },
+      { "name": "metrics", "type": "json" }
+    ],
+    "prerequisites": { "skills": [] },
+    "persona": "Senior engineer and application security reviewer. Prefers standard library over dependencies, explicit over clever, and never changes observable behavior without flagging it.",
+    "constraints": [
+      "Preserve public function signatures unless a finding requires a change; flag every such change.",
+      "No new third-party dependencies.",
+      "Every security finding cites the exact line or construct.",
+      "Return the complete file, not a diff."
+    ],
+    "procedure": [
+      "Read the full source. Identify entry points, I/O boundaries, and external calls.",
+      "Security pass: injection, unsafe deserialization, path traversal, secrets, unsafe subprocess, broad exception handling.",
+      "Correctness pass: unhandled edge cases, type mismatches, resource leaks, shadowed builtins.",
+      "Style pass: naming, structure, dead code, logging, argument parsing, type hints.",
+      "Rewrite the file applying all fixes. Keep behavior identical except where a finding mandates change.",
+      "Produce the findings table ordered by severity and a metrics block."
+    ],
+    "output_contract": "## Refactored\n```{language}\n{refactored_code}\n```\n## Findings\n| ID | Severity | Location | Issue | Fix |\n|---|---|---|---|---|\n## Behavior changes\n{list, or 'None'}\n## Metrics\n{loc_before} -> {loc_after} LOC, {findings_count} findings ({critical}/{high}/{medium}/{low})",
+    "compat": { "parallel_safe": false, "chain_after": [], "chain_before": [], "exclusive_with": [] },
+    "cost": { "tokens_est": 2500, "latency_class": "medium" }
+  },
+  {
+    "skill_id": "research.academic_synth",
+    "version": "1.0",
+    "description": "Synthesize sources, data, or notes into structured academic prose with claims tied to evidence.",
+    "priority": 70,
+    "backend": "gemini",
+    "triggers": {
+      "domains": ["research.academic", "writing.technical"],
+      "actions": ["generate", "analyze"],
+      "keywords": ["literature", "lit review", "synthesize", "synthesise", "thesis", "paper", "cite", "abstract", "related work", "findings section", "write up", "write-up"],
+      "patterns": ["\\bwrite (it |this |these |them )?up\\b"],
+      "artifact_types": ["text", "table", "url"],
+      "negative": ["casual", "blog post", "tweet", "informal"]
+    },
+    "semantic_anchor": "The user wants notes, data, or multiple sources turned into a coherent academic section with explicit claims, supporting evidence, limitations, and correctly formatted citations.",
+    "inputs": [
+      { "name": "sources", "type": "text", "required": true, "source": ["artifact", "context"],
+        "clarification_prompt": "What material should be synthesized? Pass the notes, sources or data as an artifact." },
+      { "name": "section_type", "type": "enum", "required": false, "source": ["context", "default"], "default": "findings" },
+      { "name": "citation_style", "type": "enum", "required": false, "source": ["context", "default"], "default": "APA 7" },
+      { "name": "word_target", "type": "number", "required": false, "source": ["context", "default"], "default": 600 },
+      { "name": "figures", "type": "json", "required": false, "source": ["upstream"] },
+      { "name": "stats_summary", "type": "text", "required": false, "source": ["upstream"] }
+    ],
+    "outputs": [
+      { "name": "section_text", "type": "text", "pass_full": true },
+      { "name": "claim_evidence_map", "type": "table" }
+    ],
+    "prerequisites": { "skills": [] },
+    "persona": "Academic editor. Every claim is traceable to a source or a stated result. Hedges proportionally to evidence strength. No filler sentences.",
+    "constraints": [
+      "No fabricated citations. If a source is missing, write [CITATION NEEDED].",
+      "Distinguish observed results from interpretation.",
+      "Include a limitations paragraph.",
+      "Reference figures by label when figures are supplied upstream."
+    ],
+    "procedure": [
+      "Extract discrete claims from the sources or data.",
+      "Group claims by theme; note agreement and contradiction.",
+      "Draft the section in the requested type and style, one paragraph per theme, near the word target.",
+      "Insert figure references where an upstream figure supports a claim.",
+      "Write limitations and, if applicable, future work.",
+      "Produce the claim-to-evidence map."
+    ],
+    "output_contract": "## {section_type}\n{section_text}\n\n## Claim map\n| Claim | Evidence | Strength |\n|---|---|---|",
+    "compat": { "parallel_safe": true, "chain_after": ["data.visualizer"], "chain_before": [], "exclusive_with": [] },
+    "cost": { "tokens_est": 2000, "latency_class": "medium" }
+  },
+  {
+    "skill_id": "data.visualizer",
+    "version": "1.1",
+    "description": "Turn tabular or numeric data into chart specifications with the right chart form, encoding, and captions.",
+    "priority": 60,
+    "backend": "gemini",
+    "triggers": {
+      "domains": ["data.visualization", "data.analysis"],
+      "actions": ["visualize", "analyze"],
+      "keywords": ["chart", "plot", "graph", "visualize", "visualise", "dashboard", "trend", "distribution", "compare"],
+      "patterns": ["\\bshow (me )?(the )?(trend|breakdown|distribution)\\b"],
+      "artifact_types": ["table"],
+      "negative": ["no chart", "text only", "table only", "no graphs"]
+    },
+    "semantic_anchor": "The user has numeric or tabular data and wants it represented visually, with the chart type chosen to fit the question being asked of the data.",
+    "inputs": [
+      { "name": "data", "type": "table", "required": true, "source": ["artifact", "context"],
+        "clarification_prompt": "Which data should be charted? Pass the CSV or table as a table artifact." },
+      { "name": "question", "type": "text", "required": false, "source": ["context", "default"], "default": "infer from column types" },
+      { "name": "renderer", "type": "enum", "required": false, "source": ["context", "default"], "default": "vega-lite" },
+      { "name": "max_figures", "type": "number", "required": false, "source": ["context", "default"], "default": 3 }
+    ],
+    "outputs": [
+      { "name": "figures", "type": "json", "pass_full": true },
+      { "name": "stats_summary", "type": "text" }
+    ],
+    "prerequisites": { "skills": [] },
+    "persona": "Data visualization specialist. Chooses form by the question (comparison, trend, distribution, relationship, composition). Never decorates; every mark encodes data.",
+    "constraints": [
+      "One question per figure.",
+      "Label axes with units. Caption states the takeaway, not the chart type.",
+      "Colorblind-safe palettes only.",
+      "Emit renderer-native spec plus a one-line caption per figure."
+    ],
+    "procedure": [
+      "Profile the data: column types, cardinality, ranges, missing values.",
+      "Map the question (or inferred question) to a chart form.",
+      "Produce up to max_figures specs in the renderer format.",
+      "Write a caption per figure and a 3-sentence summary of what the figures show."
+    ],
+    "output_contract": "## Figures\n{for each: ### Figure N: label, then a fenced json spec block, then Caption: ...}\n## Summary\n{3 sentences}",
+    "compat": { "parallel_safe": true, "chain_after": [], "chain_before": ["research.academic_synth"], "exclusive_with": [] },
+    "cost": { "tokens_est": 1500, "latency_class": "low" }
+  }
+]
