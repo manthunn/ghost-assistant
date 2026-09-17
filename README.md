@@ -2,7 +2,7 @@
 
 A hands-free assistant for Windows. You talk to it, it talks back, and in between
 it reads your calendar and inbox, drives applications through UI Automation,
-searches the web, and remembers things between sessions. 64 tools across 24 skill
+searches the web, and remembers things between sessions. 66 tools across 24 skill
 modules, auto-discovered at boot.
 
 Built from scratch in Python.
@@ -54,6 +54,12 @@ Some things worth calling out:
 - **Timers outlive Ghost.** Ghost closes itself after five minutes of silence, so
   an in-process timer would die with it — exactly the case a timer exists for.
   Each one is a detached process instead.
+- **Media pauses during speech.** Sustained microphone activity pauses the
+  current Windows media session only if it is playing. Silence resumes the
+  session Ghost paused, provided playback has not been stopped or switched to
+  another app. Apps without Windows media-session support are left alone.
+  Loudness detection may also react to background noise; `SPEECH_RMS` in
+  `ghost/media_pause.py` controls sensitivity.
 - **Sending is gated.** WhatsApp messages and calls reach another person the
   instant they fire, so they refuse unless the recipient and text have been read
   back and confirmed out loud.
@@ -104,7 +110,7 @@ ghost-assistant/
 │   ├── ui3d.py          # pywebview window
 │   ├── webui/           # God's Eye point-cloud Earth that reacts to Ghost's voice
 │   ├── dispatch/        # skill dispatch engine: classify, match, plan, run a DAG
-│   └── skills/          # 24 auto-loaded modules, 64 registered tools
+│   └── skills/          # 24 auto-loaded modules, 66 registered tools
 ├── tests/               # offline unit tests: py -m unittest discover -s tests
 ├── docs/TRIED_AND_SHELVED.md
 └── .env                 # keys — never committed

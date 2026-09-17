@@ -189,6 +189,7 @@ class VoiceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(live_voice, "AudioPlayer", return_value=player),
             patch.object(live_voice.sd, "RawInputStream", return_value=mic),
             patch.object(live_voice, "start_watching", return_value=watcher),
+            patch.object(live_voice, "start_pause_watching", return_value=watcher),
             patch.object(live_voice, "_level_pump"),
             patch.object(live_voice.client.aio.live, "connect", return_value=Connection()),
             patch.object(live_voice, "should_brief", side_effect=OSError("test briefing failure")),
@@ -197,7 +198,7 @@ class VoiceTests(unittest.IsolatedAsyncioTestCase):
                 await live_voice.run(Mock(), stop)
             await asyncio.sleep(0)
         self.assertTrue(stop.is_set())
-        watcher.join.assert_called_once_with()
+        self.assertEqual(watcher.join.call_count, 2)
         mic.stop.assert_called_once_with()
         mic.close.assert_called_once_with()
         player.stop.assert_called_once_with()

@@ -8,6 +8,7 @@ import numpy as np
 import sounddevice as sd
 from google.genai import types
 from .audio_ducking import start_watching
+from .media_pause import MicActivity, SPEECH_RMS, start_pause_watching
 from .brain import client, system_with_time
 from .skills import TOOLS, FUNCTIONS
 from .skills.briefing import should_brief, briefing_prompt
@@ -219,14 +220,21 @@ async def run(ui, stop_event):
     player = AudioPlayer()
     mic_q = queue.Queue()
     activity = {"last": time.monotonic()}
+    mic_activity = MicActivity()
 
     def mic_callback(indata, frames, time_info, status):
         # Muted whenever there's still unplayed Ghost audio queued, to avoid the
         # speaker->mic feedback loop. Tied to actual playback state (not a server
         # event) so it can't get stuck muted if a turn-completion signal is missed.
         if player.is_active():
+            mic_activity.set(False)
             return
-        mic_q.put_nowait(bytes(indata))
+        data = bytes(indata)
+        # Cheap RMS, same trick AudioPlayer uses for its own loudness - anything
+        # heavier here would risk glitching the input stream.
+        samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+        mic_activity.set(float(np.sqrt(np.mean(samples * samples))) > SPEECH_RMS)
+        mic_q.put_nowait(data)
 
     mic_stream = sd.RawInputStream(samplerate=IN_RATE, channels=1, dtype="int16",
                                     blocksize=BLOCK, callback=mic_callback)
@@ -239,6 +247,9 @@ async def run(ui, stop_event):
         # Driven off the same is_active() signal as the mic mute, so ducking and
         # un-muting can never disagree about whether Ghost is speaking.
         duck_thread = start_watching(player, stop_event)
+        # Pause Spotify/YouTube/whatever while the USER talks, resume when they
+        # stop - the mirror image of the ducker above, off the same mic stream.
+        pause_thread = start_pause_watching(mic_activity, stop_event)
         ui.set("🟢 Listening")
         # Run mic, receive and idle-watchdog concurrently: the receive loop blocks
         # awaiting server messages, so the watchdog needs to be its own task to be
@@ -264,6 +275,7 @@ async def run(ui, stop_event):
             # The watcher restores on its own COM thread after any fade ends.
             # Wait for that before the assistant thread can destroy the UI.
             duck_thread.join()
+            pause_thread.join()
             for t in tasks:
                 t.cancel()
             mic_q.put_nowait(None)  # unblock the mic thread's blocking get()

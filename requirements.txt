@@ -18,3 +18,6 @@ google-auth-oauthlib
 pycaw
 icalendar
 recurring-ical-events
+winrt-Windows.Media.Control>=3.2,<4
+winrt-Windows.Foundation>=3.2,<4
+winrt-Windows.Foundation.Collections>=3.2,<4
