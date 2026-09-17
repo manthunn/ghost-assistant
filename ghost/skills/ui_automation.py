@@ -45,6 +45,81 @@ def _activate(win, settle=1.5):
         pass  # some windows refuse focus; reading may still partly work
     return win
 
+def _clear_edit(control):
+    """Empty a text field reliably, no matter what kind of control it is.
+
+    Simulated backspaces are the least reliable way to clear a field: apps that
+    debounce keystrokes, cap how fast they accept input, or intercept Backspace
+    for their own shortcuts (browser "go back" on an unfocused field, WhatsApp's
+    own history nav) can eat some or all of them and leave stale text behind.
+    Try the direct route first, then fall back, verifying after each attempt
+    instead of hoping it worked.
+    """
+    from pywinauto.keyboard import send_keys
+
+    def _value():
+        getter = getattr(control, "get_value", None)
+        return getter() if callable(getter) else control.window_text()
+
+    def _empty():
+        try:
+            return _value() == ""
+        except Exception:
+            return False
+
+    # UIA's ValuePattern.SetValue writes the control's value directly - no
+    # keystrokes involved, so nothing can be dropped or intercepted.
+    try:
+        control.set_edit_text("")
+        if _empty():
+            return True
+    except Exception:
+        pass
+
+    # Select-all + Delete: Delete removes the selection rather than depending
+    # on repeated key-repeat events the way holding Backspace would.
+    try:
+        control.set_focus()
+        send_keys("^a{DELETE}")
+        time.sleep(0.15)
+        if _empty():
+            return True
+    except Exception:
+        pass
+
+    # Last resort: select-all, then backspace one more time per remaining
+    # character, re-checking as we go rather than firing a fixed key count
+    # and hoping every one landed.
+    try:
+        control.set_focus()
+        for _ in range(min(len(_value() or "") + 5, 20)):
+            if _empty():
+                return True
+            send_keys("^a{BACKSPACE}")
+            time.sleep(0.05)
+    except Exception:
+        pass
+    return _empty()
+
+
+def _edit_by_name(win, control_name):
+    query = control_name.lower().strip()
+    if not query:
+        raise ValueError("Specify the text field's name; use list_controls first.")
+    matches, exact = [], []
+    for c in win.descendants():
+        if c.element_info.control_type not in ("Edit", "ComboBox", "Document"):
+            continue
+        name = (c.window_text() or "").strip().lower()
+        if query in name:
+            matches.append(c)
+            if query == name:
+                exact.append(c)
+    matches = exact or matches
+    if len(matches) > 1:
+        raise ValueError(f"More than one text field matches '{control_name}'. Use a more specific name.")
+    return matches[0] if matches else None
+
 def _find_window(title):
     query = title.lower().strip()
     best = None
@@ -181,20 +256,8 @@ def type_into_control(window_title: str, control_name: str, text: str):
     win = _find_window(window_title)
     if not win:
         return f"No open window matching '{window_title}'."
-    query = control_name.lower().strip()
-    editable = ("Edit", "ComboBox", "Document")
-    target = None
     try:
-        for c in win.descendants():
-            name = (c.window_text() or "").strip()
-            if c.element_info.control_type in editable and query in name.lower():
-                target = c
-                break
-        if target is None:
-            for c in win.descendants():
-                if c.element_info.control_type in editable:
-                    target = c
-                    break
+        target = _edit_by_name(win, control_name)
     except Exception as e:
         return f"Couldn't search controls: {e}"
     if target is None:
@@ -202,11 +265,41 @@ def type_into_control(window_title: str, control_name: str, text: str):
     try:
         win.set_focus()
         target.set_focus()
+        if not _clear_edit(target):
+            return f"Couldn't clear '{control_name}'; no replacement text was pasted."
         _set_clipboard(text)
-        target.type_keys('^a^v')  # select-all then paste, replacing any existing content
+        target.type_keys('^v')  # paste into the now-empty field
         return f"Typed into '{control_name}'."
     except Exception as e:
         return f"Found the field but couldn't type into it: {e}"
+
+@register({"name": "clear_control",
+    "description": "Clear all text out of a text field/control inside a specific open "
+                    "window, leaving it empty. Use this instead of typing backspaces - "
+                    "some apps don't register simulated backspaces reliably. Use "
+                    "list_controls first to find the field's name.",
+    "parameters": {"type": "object", "properties": {
+        "window_title": {"type": "string"},
+        "control_name": {"type": "string"}},
+        "required": ["window_title", "control_name"]}})
+def clear_control(window_title: str, control_name: str):
+    win = _find_window(window_title)
+    if not win:
+        return f"No open window matching '{window_title}'."
+    try:
+        target = _edit_by_name(win, control_name)
+    except Exception as e:
+        return f"Couldn't search controls: {e}"
+    if target is None:
+        return f"No text field named '{control_name}' found in '{win.window_text()}'."
+    try:
+        win.set_focus()
+        target.set_focus()
+        if _clear_edit(target):
+            return f"Cleared '{control_name}'."
+        return f"Tried to clear '{control_name}' but text remains - the field may be read-only."
+    except Exception as e:
+        return f"Found the field but couldn't clear it: {e}"
 
 @register({"name": "scroll_window",
     "description": "Scroll a window or web page. Use when something the user asked "
