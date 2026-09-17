@@ -82,14 +82,16 @@ class Ducker:
                 return
             self._saved = saved
             self._ducked = True
-        self._fade([(v, cur, cur * self.level) for v, cur in saved])
+            # Serialize the volume writes too: a restore must finish after
+            # the last duck write, not just after its state was saved.
+            self._fade([(v, cur, cur * self.level) for v, cur in saved])
 
     def restore(self):
         with self._lock:
             if not self._ducked:
                 return
             saved, self._saved, self._ducked = self._saved, [], False
-        self._fade([(v, cur * self.level, cur) for v, cur in saved])
+            self._fade([(v, cur * self.level, cur) for v, cur in saved])
 
     def _fade(self, moves):
         step = FADE_MS / 1000.0 / max(1, FADE_STEPS)
@@ -110,7 +112,8 @@ def start_watching(player, stop_event, ducker=None):
     sound thread and has to stay cheap, and COM calls there would risk glitching
     playback.
 
-    Returns the Ducker so the caller can force a restore on shutdown.
+    Returns the watcher thread. Set stop_event and join it on shutdown so
+    restoration finishes on the same COM thread that captured the volumes.
     """
     ducker = ducker or Ducker()
 
@@ -133,7 +136,7 @@ def start_watching(player, stop_event, ducker=None):
                     ducker.duck()
                 elif now - last_active > RELEASE_DELAY:
                     ducker.restore()
-                time.sleep(POLL)
+                stop_event.wait(POLL)
         finally:
             # Never leave the user's music quiet because Ghost went away.
             try:
@@ -146,10 +149,11 @@ def start_watching(player, stop_event, ducker=None):
             except Exception:
                 pass
 
-    threading.Thread(target=loop, daemon=True).start()
+    watcher = threading.Thread(target=loop, daemon=True)
+    watcher.start()
     # Belt and braces: a crash that skips the finally still restores on exit.
     atexit.register(lambda: _safe_restore(ducker))
-    return ducker
+    return watcher
 
 
 def _safe_restore(ducker):

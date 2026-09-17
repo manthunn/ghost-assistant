@@ -84,8 +84,12 @@ def write(job_id, **fields):
 
 
 def git(*args, cwd=ROOT):
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
-                          text=True, timeout=120)
+    r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                       text=True, timeout=120)
+    if r.returncode != 0:
+        detail = (r.stderr or r.stdout or "no diagnostic output").strip()
+        raise RuntimeError(f"git {args[0]} failed (exit {r.returncode}): {detail[:400]}")
+    return r
 
 
 def main():
@@ -100,12 +104,8 @@ def main():
     write(job_id, request=request, branch=branch, status="running",
           started=datetime.now().isoformat(timespec="seconds"))
 
-    r = git("worktree", "add", "-b", branch, str(wt), "HEAD")
-    if r.returncode != 0:
-        write(job_id, status="failed", error=f"couldn't create worktree: {r.stderr[:400]}")
-        return 1
-
     try:
+        git("worktree", "add", "-b", branch, str(wt), "HEAD")
         # Ghost loads .env into os.environ, and this process inherits it. If
         # ANTHROPIC_API_KEY is present (even a placeholder), the claude CLI uses
         # it instead of its own login and fails with "Invalid API key". Strip it
@@ -117,24 +117,31 @@ def main():
              "--allowedTools", ALLOWED],
             cwd=str(wt), capture_output=True, text=True, timeout=TIMEOUT, env=env)
         summary = (proc.stdout or proc.stderr or "").strip()
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "no diagnostic output").strip()
+            raise RuntimeError(f"Claude Code failed (exit {proc.returncode}): {detail[-400:]}")
+
+        changed = git("status", "--porcelain", cwd=wt).stdout.strip()
+        if not changed:
+            write(job_id, status="no_changes", summary=summary[-1500:],
+                  finished=datetime.now().isoformat(timespec="seconds"))
+            notify(f"Ghost upgrade made no changes:\n{request}\n\n{summary[-400:]}")
+            return 0
+
+        git("add", "-A", cwd=wt)
+        git("commit", "-m", f"Ghost self-upgrade: {request[:60]}\n\n{summary[:800]}\n\n"
+            "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>", cwd=wt)
+        files = git("show", "--stat", "--oneline", "HEAD", cwd=wt).stdout.strip()
     except subprocess.TimeoutExpired:
-        write(job_id, status="failed", error=f"timed out after {TIMEOUT // 60} minutes")
+        write(job_id, status="failed", error="upgrade command timed out",
+              finished=datetime.now().isoformat(timespec="seconds"))
         notify(f"Ghost upgrade timed out:\n{request}")
         return 1
     except Exception as e:
-        write(job_id, status="failed", error=str(e)[:400])
-        return 1
-
-    changed = git("status", "--porcelain", cwd=wt).stdout.strip()
-    if not changed:
-        write(job_id, status="no_changes", summary=summary[-1500:],
+        write(job_id, status="failed", error=str(e)[:400],
               finished=datetime.now().isoformat(timespec="seconds"))
-        notify(f"Ghost upgrade made no changes:\n{request}\n\n{summary[-400:]}")
-        return 0
-
-    git("add", "-A", cwd=wt)
-    git("commit", "-m", f"Ghost self-upgrade: {request[:60]}\n\n{summary[:800]}", cwd=wt)
-    files = git("show", "--stat", "--oneline", "HEAD", cwd=wt).stdout.strip()
+        notify(f"Ghost upgrade failed:\n{request}\n\n{str(e)[:400]}")
+        return 1
 
     write(job_id, status="ready", summary=summary[-1500:], files=files[-800:],
           worktree=str(wt), finished=datetime.now().isoformat(timespec="seconds"))

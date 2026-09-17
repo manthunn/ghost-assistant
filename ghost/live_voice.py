@@ -2,6 +2,8 @@ import asyncio
 import threading
 import queue
 import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import numpy as np
 import sounddevice as sd
 from google.genai import types
@@ -91,7 +93,33 @@ async def _idle_watchdog(activity, stop_event):
             stop_event.set()
             return
 
+def _init_tool_thread():
+    # Desktop tools use COM. Keep them on one initialized thread, separate
+    # from both the microphone queue worker and the WebView UI thread.
+    import pythoncom
+    pythoncom.CoInitialize()
+
+
+def _close_tool_thread():
+    import pythoncom
+    pythoncom.CoUninitialize()
+
+
 async def _receive_loop(session, ui, player, stop_event, activity):
+    executor = ThreadPoolExecutor(max_workers=1, initializer=_init_tool_thread)
+    try:
+        await _receive_turns(session, ui, player, stop_event, activity, executor)
+    finally:
+        # Queue COM cleanup behind any in-flight tool. A running synchronous
+        # tool cannot be cancelled, but it must not hold up audio shutdown.
+        try:
+            executor.submit(_close_tool_thread)
+        finally:
+            executor.shutdown(wait=False)
+
+
+async def _receive_turns(session, ui, player, stop_event, activity, executor):
+    loop = asyncio.get_running_loop()
     ghost_line_open = False
     # session.receive() yields exactly ONE model turn then ends (it breaks on
     # turn_complete internally), so it must be re-entered per turn - otherwise
@@ -136,13 +164,14 @@ async def _receive_loop(session, ui, player, stop_event, activity):
                             # A tool response can only carry text, so the frame goes in
                             # as realtime video input instead; the model sees it on the
                             # turn it generates after this response.
-                            frame = capture_screen_jpeg()
+                            frame = await loop.run_in_executor(executor, capture_screen_jpeg)
                             await session.send_realtime_input(
                                 video=types.Blob(data=frame, mime_type="image/jpeg"))
                             result = ("Screenshot of the user's screen has been provided. "
                                       "Answer their question from what you can see in it.")
                         else:
-                            result = str(FUNCTIONS[fc.name](**(fc.args or {})))
+                            result = str(await loop.run_in_executor(
+                                executor, partial(FUNCTIONS[fc.name], **(fc.args or {}))))
                     except Exception as e:
                         result = f"Tool error: {e}"
                     function_responses.append(types.FunctionResponse(
@@ -209,7 +238,7 @@ async def run(ui, stop_event):
         # Dim Spotify/YouTube/whatever while Ghost talks, restore when it stops.
         # Driven off the same is_active() signal as the mic mute, so ducking and
         # un-muting can never disagree about whether Ghost is speaking.
-        ducker = start_watching(player, stop_event)
+        duck_thread = start_watching(player, stop_event)
         ui.set("🟢 Listening")
         # Run mic, receive and idle-watchdog concurrently: the receive loop blocks
         # awaiting server messages, so the watchdog needs to be its own task to be
@@ -219,25 +248,22 @@ async def run(ui, stop_event):
             asyncio.create_task(_receive_loop(session, ui, player, stop_event, activity)),
             asyncio.create_task(_idle_watchdog(activity, stop_event)),
         ]
-        # First session of the day (or 6h+ since the last): open with the briefing
-        # unprompted, rather than waiting to be asked.
-        if should_brief():
-            print("[first session in a while - delivering briefing]")
-            ui.set("🔵 Working", "briefing")
-            await session.send_realtime_input(text=briefing_prompt())
         try:
+            # First session of the day (or 6h+ since the last): open with the
+            # briefing unprompted. Keep this inside cleanup coverage too.
+            if should_brief():
+                print("[first session in a while - delivering briefing]")
+                ui.set("🔵 Working", "briefing")
+                await session.send_realtime_input(text=briefing_prompt())
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for t in done:
                 if not t.cancelled() and t.exception():
                     print(f"  [session ended on error] {t.exception()}")
         finally:
             stop_event.set()
-            # Restore volumes first and synchronously: if this session is ending
-            # because of an error, the user's music must not be left at 20%.
-            try:
-                ducker.restore()
-            except Exception:
-                pass
+            # The watcher restores on its own COM thread after any fade ends.
+            # Wait for that before the assistant thread can destroy the UI.
+            duck_thread.join()
             for t in tasks:
                 t.cancel()
             mic_q.put_nowait(None)  # unblock the mic thread's blocking get()
